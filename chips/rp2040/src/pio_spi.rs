@@ -7,7 +7,7 @@
 
 //! Programmable Input Output (PIO) hardware test file.
 use crate::clocks::{self};
-use crate::gpio::RPGpio;
+use crate::gpio::{GpioFunction, RPGpio, RPGpioPin};
 use crate::pio::{PIONumber, Pio, SMNumber, StateMachineConfiguration};
 
 use kernel::utilities::cells::TakeCell;
@@ -29,7 +29,7 @@ pub struct PioSpi<'a> {
 }
 
 impl<'a> PioSpi<'a> {
-     fn new(pio: &'a mut Pio, clocks: &'a clocks::Clocks) -> Self {
+    pub fn new(pio: &'a mut Pio, clocks: &'a clocks::Clocks) -> Self {
         Self {
             clocks,
             pio: TakeCell::new(pio),
@@ -94,6 +94,13 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             pio.add_program(&asm);
 
             // TODO: add configs and stuff
+            // I think since the program includes .side_set 1
+            // I should probably use side set
+            pio.set_side_set_pins(SMNumber::SM0, 1 as u32); // I think first state machine, 1 offset
+            // pio.set_wrap();
+
+            // set gpio pin 1 for output I guess
+            pio.gpio_init(&RPGpioPin::new(RPGpio::GPIO1));
         });
 
         Ok(())

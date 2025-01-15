@@ -43,6 +43,9 @@ use rp2040::i2c::I2c;
 use rp2040::resets::Peripheral;
 use rp2040::sysinfo;
 use rp2040::timer::RPTimer;
+use rp2040::pio_spi::PioSpi;
+use rp2040::pio::Pio;
+use rp2040::clocks::Clocks;
 
 mod io;
 
@@ -562,6 +565,12 @@ pub unsafe fn start() -> (
         sysinfo::Platform::Asic => "ASIC",
         sysinfo::Platform::Fpga => "FPGA",
     };
+
+
+
+    let mut pio = Pio::new_pio0();
+    let mut clocks = Clocks::new();
+    let pio_spi = PioSpi::new(&mut pio, &mut clocks);
 
     debug!(
         "RP2040 Revision {} {}",
