@@ -14,6 +14,7 @@ use kernel::utilities::cells::OptionalCell;
 use kernel::utilities::registers::interfaces::{ReadWriteable, Readable, Writeable};
 use kernel::utilities::registers::{register_bitfields, register_structs, ReadOnly, ReadWrite};
 use kernel::utilities::StaticRef;
+use kernel::debug;
 
 use crate::chip::Processor;
 #[repr(C)]
@@ -616,6 +617,10 @@ impl hil::gpio::Configure for RPGpioPin<'_> {
 impl hil::gpio::Output for RPGpioPin<'_> {
     fn set(&self) {
         // For performance this match might be skipped
+        debug!(
+            "GPIO pin {} was set",
+            self.pin
+        );
         match self.get_mode() {
             hil::gpio::Configuration::Output | hil::gpio::Configuration::InputOutput => {
                 self.sio_registers.gpio_out_set.set(1 << self.pin);
@@ -626,6 +631,12 @@ impl hil::gpio::Output for RPGpioPin<'_> {
 
     fn clear(&self) {
         // For performance this match might be skipped
+
+        debug!(
+            "GPIO pin {} was cleared",
+            self.pin
+        );
+
         match self.get_mode() {
             hil::gpio::Configuration::Output | hil::gpio::Configuration::InputOutput => {
                 self.sio_registers.gpio_out_clr.set(1 << self.pin);
