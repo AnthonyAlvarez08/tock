@@ -12,6 +12,16 @@ use crate::pio::{PIONumber, Pio, SMNumber, StateMachineConfiguration};
 
 use kernel::utilities::cells::TakeCell;
 use kernel::{hil, ErrorCode};
+use kernel::hil::spi::cs::ChipSelectPolar;
+use kernel::hil::spi::SpiMaster;
+use kernel::hil::spi::SpiMasterClient;
+use kernel::hil::spi::{ClockPhase, ClockPolarity};
+use kernel::utilities::cells::MapCell;
+use kernel::utilities::cells::OptionalCell;
+use kernel::utilities::leasable_buffer::SubSliceMut;
+use kernel::utilities::registers::interfaces::{ReadWriteable, Readable, Writeable};
+use kernel::utilities::registers::{register_bitfields, register_structs, ReadOnly, ReadWrite};
+use kernel::utilities::StaticRef;
 
 pub struct PioSpi<'a> {
     clocks: &'a clocks::Clocks,
@@ -19,7 +29,7 @@ pub struct PioSpi<'a> {
 }
 
 impl<'a> PioSpi<'a> {
-    pub fn new(pio: &'a mut Pio, clocks: &'a clocks::Clocks) -> Self {
+     fn new(pio: &'a mut Pio, clocks: &'a clocks::Clocks) -> Self {
         Self {
             clocks,
             pio: TakeCell::new(pio),
@@ -28,11 +38,13 @@ impl<'a> PioSpi<'a> {
 }
 
 
-impl hil::spi::SpiMaster<'a> for PioSpi<'a> {
+impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
 
+    // I just copid this from spi.rs in the same dfolder
+    type ChipSelect = ChipSelectPolar<'a, crate::gpio::RPGpioPin<'a>>;
 
-    pub fn init(&self) -> Result<(), ErrorCode> {
+    fn init(&self) -> Result<(), ErrorCode> {
 
         /*
 
@@ -68,9 +80,13 @@ impl hil::spi::SpiMaster<'a> for PioSpi<'a> {
         
         */
 
-        let asm: [u8, 2] = [
-            0x6101, /*  0: out    pins, 1         side 0 [1] */
-			0x5101 /*  1: in     pins, 1         side 1 [1] */
+        let asm: [u8; 4] = [
+            // these were 4 digit hex numbers in the zephyr one
+            // maybe it will work fine if I split them?
+            0x61,
+            0x01, /*  0: out    pins, 1         side 0 [1] */
+			0x51,
+            0x01 /*  1: in     pins, 1         side 1 [1] */
         ];
 
         self.pio.map(|pio |{
@@ -84,17 +100,17 @@ impl hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
 
-    pub fn set_client(&self, client: &'a dyn SpiMasterClient) {
+    fn set_client(&self, client: &'a dyn SpiMasterClient) {
 
     }
 
 
-    pub fn is_busy(&self) -> bool {
+    fn is_busy(&self) -> bool {
         true
     }
 
 
-    pub fn read_write_bytes(
+    fn read_write_bytes(
         &self,
         write_buffer: SubSliceMut<'static, u8>,
         read_buffer: Option<SubSliceMut<'static, u8>>,
