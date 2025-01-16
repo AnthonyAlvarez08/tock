@@ -85,13 +85,18 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         self.pio.map(|pio| {
             pio.init();
             pio.add_program(&asm);
-
+            
             // TODO: add custom configurations if necessary
             let mut custom_config = StateMachineConfiguration::default();
             let sm_number = SMNumber::SM0;
             let pin = 1;
 
             pio.spi_program_init(PIONumber::PIO0, sm_number, pin, &custom_config);
+
+            // use example blink program that is in 
+            // chips/rp2040/src/pio.rs
+            // put it in the other PIO and other State machine tho
+            pio.blink_program_init(PIONumber::PIO1, SMNumber::SM1, 1, &custom_config);
         });
 
         Ok(())
