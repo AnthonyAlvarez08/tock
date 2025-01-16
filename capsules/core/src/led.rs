@@ -96,10 +96,10 @@ impl<L: led::Led, const NUM_LEDS: usize> SyscallDriver for LedDriver<'_, L, NUM_
     ///        `INVAL` if the LED index is not valid.
     fn command(&self, command_num: usize, data: usize, _: usize, _: ProcessId) -> CommandReturn {
 
-        debug!(
-            "LED syscall with command {} and data {}\n",
-            command_num, data
-        );
+        // debug!(
+        //     "LED syscall with command {} and data {}\n",
+        //     command_num, data
+        // );
 
         match command_num {
             // get number of LEDs
