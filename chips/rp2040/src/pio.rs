@@ -1342,6 +1342,23 @@ impl Pio {
         self.sm_set_enabled(sm_number, true);
     }
 
+    pub fn spi_program_init(
+        &mut self,
+        pio_number: PIONumber,
+        sm_number: SMNumber,
+        pin: u32,
+        config: &StateMachineConfiguration,
+    ) {
+        self.sm_config(sm_number, config);
+        self.pio_number = pio_number;
+        self.gpio_init(&RPGpioPin::new(RPGpio::from_u32(pin)));
+        self.sm_set_enabled(sm_number, false);
+        self.set_pins_out(sm_number, pin, 1, true);
+        self.set_side_set_pins(sm_number, pin);
+        self.sm_init(sm_number);
+        self.sm_set_enabled(sm_number, true);
+    }
+
     // # Debugging
     /// Returns current instruction running on the state machine.
     pub fn read_instr(&self, sm_number: SMNumber) -> u32 {

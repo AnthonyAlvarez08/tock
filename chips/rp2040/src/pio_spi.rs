@@ -9,19 +9,18 @@
 use crate::clocks::{self};
 use crate::gpio::{GpioFunction, RPGpio, RPGpioPin};
 use crate::pio::{PIONumber, Pio, SMNumber, StateMachineConfiguration};
-
-use kernel::utilities::cells::TakeCell;
-use kernel::{hil, ErrorCode};
 use kernel::hil::spi::cs::ChipSelectPolar;
 use kernel::hil::spi::SpiMaster;
 use kernel::hil::spi::SpiMasterClient;
 use kernel::hil::spi::{ClockPhase, ClockPolarity};
 use kernel::utilities::cells::MapCell;
 use kernel::utilities::cells::OptionalCell;
+use kernel::utilities::cells::TakeCell;
 use kernel::utilities::leasable_buffer::SubSliceMut;
 use kernel::utilities::registers::interfaces::{ReadWriteable, Readable, Writeable};
 use kernel::utilities::registers::{register_bitfields, register_structs, ReadOnly, ReadWrite};
 use kernel::utilities::StaticRef;
+use kernel::{hil, ErrorCode};
 
 pub struct PioSpi<'a> {
     clocks: &'a clocks::Clocks,
@@ -37,15 +36,11 @@ impl<'a> PioSpi<'a> {
     }
 }
 
-
 impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
-
-
-    // I just copid this from spi.rs in the same dfolder
+    // I just copied this from spi.rs in the same folder
     type ChipSelect = ChipSelectPolar<'a, crate::gpio::RPGpioPin<'a>>;
 
     fn init(&self) -> Result<(), ErrorCode> {
-
         /*
 
         implements this program for now
@@ -56,7 +51,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
         .pio_version 0 // only requires PIO version 0
         https://github.com/zephyrproject-rtos/zephyr/blob/main/drivers/spi/spi_rpi_pico_pio.c
-        
+
 
         .program spi_cpha0
         .side_set 1
@@ -77,45 +72,36 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
             out pins, 1 side 0 [1] ; Stall here on empty (sideset proceeds even if
             in pins, 1  side 1 [1] ; instruction stalls, so we stall with SCK low)
-        
+
         */
 
         let asm: [u8; 4] = [
             // these were 4 digit hex numbers in the zephyr one
             // maybe it will work fine if I split them?
-            0x61,
-            0x01, /*  0: out    pins, 1         side 0 [1] */
-			0x51,
-            0x01 /*  1: in     pins, 1         side 1 [1] */
+            0x61, 0x01, /*  0: out    pins, 1         side 0 [1] */
+            0x51, 0x01, /*  1: in     pins, 1         side 1 [1] */
         ];
 
-        self.pio.map(|pio |{
+        self.pio.map(|pio| {
             pio.init();
             pio.add_program(&asm);
 
-            // TODO: add configs and stuff
-            // I think since the program includes .side_set 1
-            // I should probably use side set
-            pio.set_side_set_pins(SMNumber::SM0, 1 as u32); // I think first state machine, 1 offset
-            // pio.set_wrap();
+            // TODO: add custom configurations if necessary
+            let mut custom_config = StateMachineConfiguration::default();
+            let sm_number = SMNumber::SM0;
+            let pin = 1;
 
-            // set gpio pin 1 for output I guess
-            pio.gpio_init(&RPGpioPin::new(RPGpio::GPIO1));
+            pio.spi_program_init(PIONumber::PIO0, sm_number, pin, &custom_config);
         });
 
         Ok(())
     }
 
-
-    fn set_client(&self, client: &'a dyn SpiMasterClient) {
-
-    }
-
+    fn set_client(&self, client: &'a dyn SpiMasterClient) {}
 
     fn is_busy(&self) -> bool {
         true
     }
-
 
     fn read_write_bytes(
         &self,
@@ -129,70 +115,55 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             Option<SubSliceMut<'static, u8>>,
         ),
     > {
-
-
         Ok(())
-
     }
-
 
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
+        self.pio.map(|pio| {
+            // Waits until the state machine TX FIFO is empty, then write the byte of data
+            pio.sm_put_blocking(SMNumber::SM0, val as u32);
+        });
+
         Ok(())
     }
 
-    
     fn read_byte(&self) -> Result<u8, ErrorCode> {
         Ok(1 as u8)
     }
 
-    
     fn read_write_byte(&self, val: u8) -> Result<u8, ErrorCode> {
         Ok(1 as u8)
     }
 
-    
     fn specify_chip_select(&self, cs: Self::ChipSelect) -> Result<(), ErrorCode> {
         Ok(())
     }
 
-    
     fn set_rate(&self, rate: u32) -> Result<u32, ErrorCode> {
         Ok(rate)
     }
 
-    
     fn get_rate(&self) -> u32 {
         4 as u32
     }
 
-   
     fn set_polarity(&self, polarity: ClockPolarity) -> Result<(), ErrorCode> {
         Ok(())
     }
 
-   
     fn get_polarity(&self) -> ClockPolarity {
         ClockPolarity::IdleHigh
     }
 
-   
     fn set_phase(&self, phase: ClockPhase) -> Result<(), ErrorCode> {
         Ok(())
     }
 
-    
     fn get_phase(&self) -> ClockPhase {
         ClockPhase::SampleLeading
     }
 
-    
-    fn hold_low(&self) {
+    fn hold_low(&self) {}
 
-    }
-
-    
-    fn release_low(&self) {
-
-    }
-
+    fn release_low(&self) {}
 }
