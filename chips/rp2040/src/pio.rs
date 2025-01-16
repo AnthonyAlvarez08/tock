@@ -1174,6 +1174,17 @@ impl Pio {
         self.registers.txf[sm_number as usize].set(data);
     }
 
+    // Read a word of data from a state machine's RX FIFO.
+    pub fn sm_get(&self, sm_number: SMNumber) -> u32 {
+        return self.registers.rxf[sm_number as usize].get();
+    }
+
+    // Wait until a state machine's RX FIFO is empty, then read a word of data from it.
+    pub fn sm_get_blocking(&self, sm_number: SMNumber) -> u32 {
+        while self.registers.fstat.read(FSTAT::RXEMPTY) != 0 {}
+        return self.registers.rxf[sm_number as usize].get();
+    }
+
     /// Restart a state machine.
     pub fn restart_sm(&self, sm_number: SMNumber) {
         match sm_number {

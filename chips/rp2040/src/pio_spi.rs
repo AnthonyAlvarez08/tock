@@ -128,6 +128,12 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn read_byte(&self) -> Result<u8, ErrorCode> {
+        self.pio.map(|pio| {
+            // Read data from the RX FIFO
+            let data = pio.sm_get(SMNumber::SM0);
+            return data;
+        });
+
         Ok(1 as u8)
     }
 
