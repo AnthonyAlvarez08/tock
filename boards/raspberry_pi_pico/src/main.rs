@@ -47,6 +47,7 @@ use rp2040::pio_spi::PioSpi;
 use rp2040::pio::Pio;
 use rp2040::clocks::Clocks;
 use kernel::hil::spi::SpiMaster;
+use kernel::hil::gpio::Output;
 
 mod io;
 
@@ -612,11 +613,26 @@ pub unsafe fn start() -> (
     });
 
 
+    let pin6 =  peripherals.pins.get_pin(RPGpio::GPIO6);
+    let pin7 =  peripherals.pins.get_pin(RPGpio::GPIO7);
+    let pin8 =  peripherals.pins.get_pin(RPGpio::GPIO8);
+    pin6.make_output();
+    pin7.make_output();
+    pin8.make_output();
+    
+    for _ in 0..500 {
+        pin6.toggle();
+        pin7.toggle();
+        pin8.toggle();
+        debug!("Toggled!!\n");
+    }
+
+
     let mut pio = Pio::new_pio0();
     let mut clocks = Clocks::new();
     let _pio_spi = PioSpi::new(&mut pio, &mut clocks);
 
-    let _ = _pio_spi.init();
+    // let _ = _pio_spi.init();
     // write the character A for example
     let _ = _pio_spi.write_byte(0x41 as u8);
     debug!("Maybe initialized PIO SPI?\n");

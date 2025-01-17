@@ -1303,6 +1303,7 @@ impl Pio {
         self.set_side_set_pins(sm_number, 7);
         self.sm_init(sm_number);
         self.sm_set_enabled(sm_number, true);
+        // self.set_wrap(sm_number, 0, );
     }
 
     pub fn hello_program_init(
