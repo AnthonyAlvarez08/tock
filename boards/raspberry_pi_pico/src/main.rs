@@ -48,6 +48,8 @@ use rp2040::pio::Pio;
 use rp2040::clocks::Clocks;
 use kernel::hil::spi::SpiMaster;
 use kernel::hil::gpio::Output;
+use rp2040::pio_pwm::PioPwm;
+use kernel::hil::pwm::Pwm;
 
 mod io;
 
@@ -613,29 +615,44 @@ pub unsafe fn start() -> (
     });
 
 
-    let pin6 =  peripherals.pins.get_pin(RPGpio::GPIO6);
-    let pin7 =  peripherals.pins.get_pin(RPGpio::GPIO7);
-    let pin8 =  peripherals.pins.get_pin(RPGpio::GPIO8);
-    pin6.make_output();
-    pin7.make_output();
-    pin8.make_output();
+    // let pin6 =  peripherals.pins.get_pin(RPGpio::GPIO6);
+    // let pin7 =  peripherals.pins.get_pin(RPGpio::GPIO7);
+    // let pin8 =  peripherals.pins.get_pin(RPGpio::GPIO8);
+    // pin6.make_output();
+    // pin7.make_output();
+    // pin8.make_output();
     
-    for _ in 0..500 {
-        pin6.toggle();
-        pin7.toggle();
-        pin8.toggle();
-        debug!("Toggled!!\n");
-    }
+    // for _ in 0..500 {
+    //     pin6.toggle();
+    //     pin7.toggle();
+    //     pin8.toggle();
+    //     debug!("Toggled!!\n");
+    // }
 
 
     let mut pio = Pio::new_pio0();
     let mut clocks = Clocks::new();
     let _pio_spi = PioSpi::new(&mut pio, &mut clocks);
 
-    // let _ = _pio_spi.init();
+    let _ = _pio_spi.init();
     // write the character A for example
-    let _ = _pio_spi.write_byte(0x41 as u8);
-    debug!("Maybe initialized PIO SPI?\n");
+    for i in 0..20 {
+        let _ = _pio_spi.write_byte((0x41 + i as u8) as u8);
+    }
+    
+    // debug!("Maybe initialized PIO SPI?\n");
+
+    // let mut pio: Pio = Pio::new_pio0();
+
+    // let pio_pwm = PioPwm::new(&mut pio, &peripherals.clocks);
+    // // This will start a PWM with PIO with the set frequency and duty cycle on the specified pin.
+    // pio_pwm
+    //     .start(
+    //         &RPGpio::GPIO7,
+    //         pio_pwm.get_maximum_frequency_hz() / 125000, /*1_000*/
+    //         pio_pwm.get_maximum_duty_cycle() / 2,
+    //     )
+    //     .unwrap();
 
     (board_kernel, raspberry_pi_pico, chip)
 }

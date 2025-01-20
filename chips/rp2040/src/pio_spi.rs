@@ -82,21 +82,53 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             0x51, 0x01, /*  1: in     pins, 1         side 1 [1] */
         ];
 
+
+        /*
+        
+        state machine configs
+        
+        pub out_pins_count: u32,
+    pub out_pins_base: u32,
+    pub set_pins_count: u32,
+    pub set_pins_base: u32,
+    pub in_pins_base: u32,
+    pub side_set_base: u32,
+    pub side_set_opt_enable: bool,
+    pub side_set_bit_count: u32,
+    pub side_set_pindirs: bool,
+    pub wrap: u32,
+    pub wrap_to: u32,
+    pub in_shift_direction_right: bool,
+    pub in_autopush: bool,
+    pub in_push_threshold: u32,
+    pub out_shift_direction_right: bool,
+    pub out_autopull: bool,
+    pub out_pull_threshold: u32,
+    pub jmp_pin: u32,
+    pub out_special_sticky: bool,
+    pub out_special_has_enable_pin: bool,
+    pub out_special_enable_pin_index: u32,
+    pub mov_status_sel: PioMovStatusType,
+    pub mov_status_n: u32,
+    pub div_int: u32,
+    pub div_frac: u32,*/
+
         self.pio.map(|pio| {
             pio.init();
             pio.add_program(&asm);
             
             // TODO: add custom configurations if necessary
             let mut custom_config = StateMachineConfiguration::default();
+
+            // the program requires auto push and pull to be on
+            custom_config.in_autopush = true;
+            custom_config.out_autopull = true;
             let sm_number = SMNumber::SM0;
             let pin = 4;
 
             pio.spi_program_init(PIONumber::PIO0, sm_number, pin, &custom_config);
 
-            // use example blink program that is in 
-            // chips/rp2040/src/pio.rs
-            // put it in the other PIO and other State machine tho
-            // pio.blink_program_init(PIONumber::PIO1, SMNumber::SM1, 2, &custom_config);
+        
         });
 
         Ok(())
