@@ -21,6 +21,7 @@ use kernel::utilities::registers::interfaces::{ReadWriteable, Readable, Writeabl
 use kernel::utilities::registers::{register_bitfields, register_structs, ReadOnly, ReadWrite};
 use kernel::utilities::StaticRef;
 use kernel::{hil, ErrorCode};
+use kernel::debug;
 
 pub struct PioSpi<'a> {
     clocks: &'a clocks::Clocks,
@@ -127,9 +128,9 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             custom_config.in_pins_base = 11;
             custom_config.out_pins_base = 12;
             custom_config.side_set_bit_count = 1;
-            custom_config.out_pins_count = 1;
-            // custom_config.side_set_opt_enable = true;
-            // custom_config.side_set_pindirs = false;
+            // custom_config.out_pins_count = 32; //1;
+            custom_config.side_set_opt_enable = false;
+            custom_config.side_set_pindirs = false;
 
             // custom_config.in_push_threshold = 8;
             // custom_config.out_pull_threshold = 8;
@@ -137,18 +138,25 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             custom_config.out_autopull = true;
 
             let sm_number = SMNumber::SM0;
-            let set_pin = 10;
+            let side_set_pin = 10;
             let in_pin = 11;
             let out_pin = 12;
 
             pio.spi_program_init(
                 PIONumber::PIO0,
                 sm_number,
-                set_pin,
+                side_set_pin,
                 in_pin,
                 out_pin,
                 &custom_config,
             );
+
+
+            // write a bunch of As I guess
+            for _ in 0..100 {
+                pio.sm_put(sm_number, 0x41414141);
+                debug!("Attempting to write AAAA");
+            }
         });
 
         Ok(())

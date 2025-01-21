@@ -1358,30 +1358,31 @@ impl Pio {
         &mut self,
         pio_number: PIONumber,
         sm_number: SMNumber,
-        set_pin: u32,
+        side_set_pin: u32,
         in_pin: u32,
         out_pin: u32,
         config: &StateMachineConfiguration,
     ) {
         self.sm_config(sm_number, config);
         self.pio_number = pio_number;
-        self.gpio_init(&RPGpioPin::new(RPGpio::from_u32(set_pin)));
+        self.gpio_init(&RPGpioPin::new(RPGpio::from_u32(side_set_pin)));
         self.gpio_init(&RPGpioPin::new(RPGpio::from_u32(in_pin)));
         self.gpio_init(&RPGpioPin::new(RPGpio::from_u32(out_pin)));
 
         self.sm_set_enabled(sm_number, false);
 
-        // self.set_pins_out(sm_number, out_pin, 1, true);
-        self.set_out_pins(sm_number, out_pin, 1);
-        self.set_side_set_pins(sm_number, set_pin);
+        self.set_pins_out(sm_number, out_pin, 1, true);
+        self.set_out_pins(sm_number, out_pin, config.out_pins_count);
+        self.set_side_set_pins(sm_number, side_set_pin);
+        self.set_side_set(sm_number, config.side_set_bit_count, false, false);
         self.set_in_pins(sm_number, in_pin);
 
         self.sm_init(sm_number);
-        self.sm_put(sm_number, 0x41414141);
+        // self.sm_put(sm_number, 0x41414141);
         self.sm_set_enabled(sm_number, true);
     }
 
-    // # Debugging
+    // # Debuggling
     /// Returns current instruction running on the state machine.
     pub fn read_instr(&self, sm_number: SMNumber) -> u32 {
         self.registers.sm[sm_number as usize]

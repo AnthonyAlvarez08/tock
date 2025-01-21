@@ -638,7 +638,9 @@ pub unsafe fn start() -> (
     // write the character A for example
     for i in 0..20 {
         let _ = _pio_spi.write_byte((0x41 + i as u8) as u8);
+        debug!("attempting to write the character A");
     }
+
     
     // debug!("Maybe initialized PIO SPI?\n");
 
