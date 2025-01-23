@@ -31,8 +31,12 @@ use kernel::scheduler::round_robin::RoundRobinSched;
 use kernel::syscall::SyscallDriver;
 use kernel::{capabilities, create_capability, static_init, Kernel};
 
+use kernel::hil::gpio::Output;
+use kernel::hil::pwm::Pwm;
+use kernel::hil::spi::SpiMaster;
 use rp2040::adc::{Adc, Channel};
 use rp2040::chip::{Rp2040, Rp2040DefaultPeripherals};
+use rp2040::clocks::Clocks;
 use rp2040::clocks::{
     AdcAuxiliaryClockSource, PeripheralAuxiliaryClockSource, PllClock,
     ReferenceAuxiliaryClockSource, ReferenceClockSource, RtcAuxiliaryClockSource,
@@ -40,16 +44,13 @@ use rp2040::clocks::{
 };
 use rp2040::gpio::{GpioFunction, RPGpio, RPGpioPin};
 use rp2040::i2c::I2c;
+use rp2040::pio::Pio;
+use rp2040::pio::{PIONumber, SMNumber, StateMachineConfiguration};
+use rp2040::pio_pwm::PioPwm;
+use rp2040::pio_spi::PioSpi;
 use rp2040::resets::Peripheral;
 use rp2040::sysinfo;
 use rp2040::timer::RPTimer;
-use rp2040::pio_spi::PioSpi;
-use rp2040::pio::Pio;
-use rp2040::clocks::Clocks;
-use kernel::hil::spi::SpiMaster;
-use kernel::hil::gpio::Output;
-use rp2040::pio_pwm::PioPwm;
-use kernel::hil::pwm::Pwm;
 
 mod io;
 
@@ -570,10 +571,6 @@ pub unsafe fn start() -> (
         sysinfo::Platform::Fpga => "FPGA",
     };
 
-
-
-    
-
     debug!(
         "RP2040 Revision {} {}",
         peripherals.sysinfo.get_revision(),
@@ -614,14 +611,13 @@ pub unsafe fn start() -> (
         debug!("{:?}", err);
     });
 
-
     // let pin6 =  peripherals.pins.get_pin(RPGpio::GPIO6);
     // let pin7 =  peripherals.pins.get_pin(RPGpio::GPIO7);
     // let pin8 =  peripherals.pins.get_pin(RPGpio::GPIO8);
     // pin6.make_output();
     // pin7.make_output();
     // pin8.make_output();
-    
+
     // for _ in 0..500 {
     //     pin6.toggle();
     //     pin7.toggle();
@@ -629,19 +625,39 @@ pub unsafe fn start() -> (
     //     debug!("Toggled!!\n");
     // }
 
-
     let mut pio = Pio::new_pio0();
-    let mut clocks = Clocks::new();
-    let _pio_spi = PioSpi::new(&mut pio, &mut clocks);
+    let clocks = Clocks::new();
+    let _pio_spi = PioSpi::new(
+        &mut pio,
+        &clocks,
+        10,
+        11,
+        12,
+        SMNumber::SM0,
+        PIONumber::PIO0,
+    );
+
+    let mut pio2 = Pio::new_pio0();
+    let _receive_spi = PioSpi::new(
+        &mut pio2,
+        &clocks,
+        10,
+        12,
+        11,
+        SMNumber::SM1,
+        PIONumber::PIO0,
+    );
 
     let _ = _pio_spi.init();
+    let _ = _receive_spi.init();
     // write the character A for example
     for i in 0..20 {
         let _ = _pio_spi.write_byte((0x41 + i as u8) as u8);
-        debug!("attempting to write the character A");
+        let val = _receive_spi.read_byte().unwrap();
+        debug!("We have received this value: {val}");
+        debug!("attempting to write the character A\n");
     }
 
-    
     // debug!("Maybe initialized PIO SPI?\n");
 
     // let mut pio: Pio = Pio::new_pio0();

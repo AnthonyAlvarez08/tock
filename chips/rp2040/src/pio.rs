@@ -516,7 +516,7 @@ pub enum SMNumber {
 }
 
 /// There can be 2 PIOs per RP2040.
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum PIONumber {
     PIO0 = 0,
     PIO1 = 1,
