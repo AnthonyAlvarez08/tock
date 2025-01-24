@@ -9,6 +9,7 @@
 use crate::clocks::{self};
 use crate::gpio::{GpioFunction, RPGpio, RPGpioPin};
 use crate::pio::{PIONumber, Pio, SMNumber, StateMachineConfiguration};
+use kernel::debug;
 use kernel::hil::spi::cs::ChipSelectPolar;
 use kernel::hil::spi::SpiMaster;
 use kernel::hil::spi::SpiMasterClient;
@@ -21,18 +22,35 @@ use kernel::utilities::registers::interfaces::{ReadWriteable, Readable, Writeabl
 use kernel::utilities::registers::{register_bitfields, register_structs, ReadOnly, ReadWrite};
 use kernel::utilities::StaticRef;
 use kernel::{hil, ErrorCode};
-use kernel::debug;
 
 pub struct PioSpi<'a> {
     clocks: &'a clocks::Clocks,
     pio: TakeCell<'a, Pio>,
+    side_set_pin: u32,
+    out_pin: u32,
+    in_pin: u32,
+    sm_number: SMNumber,
+    pio_number: PIONumber,
 }
 
 impl<'a> PioSpi<'a> {
-    pub fn new(pio: &'a mut Pio, clocks: &'a clocks::Clocks) -> Self {
+    pub fn new(
+        pio: &'a mut Pio,
+        clocks: &'a clocks::Clocks,
+        side_set_pin: u32,
+        in_pin: u32,
+        out_pin: u32,
+        sm_number: SMNumber,
+        pio_number: PIONumber,
+    ) -> Self {
         Self {
             clocks,
             pio: TakeCell::new(pio),
+            side_set_pin: side_set_pin,
+            in_pin: in_pin,
+            out_pin: out_pin,
+            sm_number: sm_number,
+            pio_number: pio_number,
         }
     }
 }
@@ -90,9 +108,9 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
         /*
 
-            state machine configs
+        state machine configs
 
-            pub out_pins_count: u32,
+        pub out_pins_count: u32,
         pub out_pins_base: u32,
         pub set_pins_count: u32,
         pub set_pins_base: u32,
@@ -129,9 +147,9 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
             // custom_config.div_frac = 0;
             // custom_config.div_int = 1;
-            custom_config.side_set_base = 10;
-            custom_config.in_pins_base = 11;
-            custom_config.out_pins_base = 12;
+            custom_config.side_set_base = self.side_set_pin;
+            custom_config.in_pins_base = self.in_pin;
+            custom_config.out_pins_base = self.out_pin;
             custom_config.side_set_bit_count = 1;
             // custom_config.out_pins_count = 32; //1;
             // custom_config.side_set_opt_enable = true;
@@ -144,23 +162,15 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             // custom_config.out_pull_threshold = 8;
             custom_config.in_autopush = true;
             custom_config.out_autopull = true;
-            custom_config.in_shift_direction_right = false;
-            custom_config.out_shift_direction_right = false;
-
-            let sm_number = SMNumber::SM0;
-            let side_set_pin = 10;
-            let in_pin = 11;
-            let out_pin = 12;
 
             pio.spi_program_init(
-                PIONumber::PIO0,
-                sm_number,
-                side_set_pin,
-                in_pin,
-                out_pin,
+                self.pio_number,
+                self.sm_number,
+                self.side_set_pin,
+                self.in_pin,
+                self.out_pin,
                 &custom_config,
             );
-
 
         });
 
@@ -191,7 +201,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
         self.pio.map(|pio| {
             // Waits until the state machine TX FIFO is empty, then write the byte of data
-            pio.sm_put(SMNumber::SM0, val as u32);
+            pio.sm_put(self.sm_number, val as u32);
             // pio.sm_put(SMNumber::SM0, 0xA1B2C3D4);
             // pio.sm_put(SMNumber::SM0, 0xA1B2C3D4);
         });
@@ -200,13 +210,13 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn read_byte(&self) -> Result<u8, ErrorCode> {
+        let mut data: u32 = 0;
         self.pio.map(|pio| {
             // Read data from the RX FIFO
-            let data = pio.sm_get(SMNumber::SM0);
-            return data;
+            data = pio.sm_get(self.sm_number);
         });
 
-        Ok(1 as u8)
+        Ok(data as u8)
     }
 
     fn read_write_byte(&self, val: u8) -> Result<u8, ErrorCode> {
