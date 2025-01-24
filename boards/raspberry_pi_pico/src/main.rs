@@ -615,19 +615,17 @@ pub unsafe fn start() -> (
     });
 
 
-    // let pin6 =  peripherals.pins.get_pin(RPGpio::GPIO6);
-    // let pin7 =  peripherals.pins.get_pin(RPGpio::GPIO7);
-    // let pin8 =  peripherals.pins.get_pin(RPGpio::GPIO8);
-    // pin6.make_output();
-    // pin7.make_output();
-    // pin8.make_output();
+    let pin6 =  peripherals.pins.get_pin(RPGpio::GPIO6);
+    pin6.make_output();
+
+
+
     
-    // for _ in 0..500 {
-    //     pin6.toggle();
-    //     pin7.toggle();
-    //     pin8.toggle();
-    //     debug!("Toggled!!\n");
-    // }
+    for _ in 0..10 {
+        pin6.toggle();
+
+        debug!("Toggled!!\n");
+    }
 
 
     let mut pio = Pio::new_pio0();
@@ -636,11 +634,20 @@ pub unsafe fn start() -> (
 
     let _ = _pio_spi.init();
     // write the character A for example
-    for i in 0..20 {
-        let _ = _pio_spi.write_byte((0x41 + i as u8) as u8);
-        debug!("attempting to write the character A");
-    }
+    // for i in 0..20 {
+    //     let _ = _pio_spi.write_byte((0x41 + i as u8) as u8);
+    //     debug!("attempting to write the character A");
+    // }
 
+    _pio_spi.write_byte((0xA7) as u8);
+    _pio_spi.write_byte((0xB6) as u8);
+    // _pio_spi.write_byte((0xA7) as u8);
+    // _pio_spi.write_byte((0x51) as u8);
+
+    for _ in 0..10 {
+        pin6.toggle();
+        debug!("Toggled!!\n");
+    }
     
     // debug!("Maybe initialized PIO SPI?\n");
 

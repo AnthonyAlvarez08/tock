@@ -53,6 +53,11 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         .pio_version 0 // only requires PIO version 0
         https://github.com/zephyrproject-rtos/zephyr/blob/main/drivers/spi/spi_rpi_pico_pio.c
 
+        #define SPI_MODE_0_0_WRAP_TARGET 0
+#define SPI_MODE_0_0_WRAP        1
+#define SPI_MODE_0_0_CYCLES      4
+
+
 
         .program spi_cpha0
         .side_set 1
@@ -129,13 +134,18 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             custom_config.out_pins_base = 12;
             custom_config.side_set_bit_count = 1;
             // custom_config.out_pins_count = 32; //1;
-            custom_config.side_set_opt_enable = false;
-            custom_config.side_set_pindirs = false;
+            // custom_config.side_set_opt_enable = true;
+            // custom_config.side_set_pindirs = true;
+
+
+            custom_config.wrap = 1;
 
             // custom_config.in_push_threshold = 8;
             // custom_config.out_pull_threshold = 8;
             custom_config.in_autopush = true;
             custom_config.out_autopull = true;
+            custom_config.in_shift_direction_right = false;
+            custom_config.out_shift_direction_right = false;
 
             let sm_number = SMNumber::SM0;
             let side_set_pin = 10;
@@ -152,11 +162,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             );
 
 
-            // write a bunch of As I guess
-            for _ in 0..100 {
-                pio.sm_put(sm_number, 0x41414141);
-                debug!("Attempting to write AAAA");
-            }
         });
 
         Ok(())
@@ -187,6 +192,8 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         self.pio.map(|pio| {
             // Waits until the state machine TX FIFO is empty, then write the byte of data
             pio.sm_put(SMNumber::SM0, val as u32);
+            // pio.sm_put(SMNumber::SM0, 0xA1B2C3D4);
+            // pio.sm_put(SMNumber::SM0, 0xA1B2C3D4);
         });
 
         Ok(())
