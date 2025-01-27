@@ -629,9 +629,9 @@ pub unsafe fn start() -> (
     let _pio_spi = PioSpi::new(
         &mut pio,
         &clocks,
-        10,
-        11,
-        12,
+        10, // side set
+        11, // in
+        12, // out
         SMNumber::SM0,
         PIONumber::PIO0,
     );
@@ -640,11 +640,11 @@ pub unsafe fn start() -> (
     let _receive_spi = PioSpi::new(
         &mut pio2,
         &clocks,
-        10,
-        12,
-        11,
+        19, // sideset
+        20, // in
+        21, // out
         SMNumber::SM1,
-        PIONumber::PIO0,
+        PIONumber::PIO1,
     );
 
     let _ = _pio_spi.init();
@@ -655,14 +655,42 @@ pub unsafe fn start() -> (
         
     //     debug!("attempting to write the character A\n");
     // }
-    _pio_spi.write_byte((0xA7) as u8);
-    let val = _receive_spi.read_byte().unwrap();
-    debug!("We have received this value: {val}");
-    _pio_spi.write_byte((0xB6) as u8);
-    let val = _receive_spi.read_byte().unwrap();
-    debug!("We have received this value: {val}");
+
+
+
+
+
+    // _pio_spi.write_byte((0xA7) as u8);
+    // let val = _receive_spi.read_byte().unwrap();
+    // debug!("We have received this value: {val}");
+    // _pio_spi.write_byte((0xB6) as u8);
+    // let val = _receive_spi.read_byte().unwrap();
+    // debug!("We have received this value: {val}");
+    // _receive_spi.write_byte(_receive_spi.read_byte().unwrap());
+
+
+
+
+
+
     // _pio_spi.write_byte((0xA7) as u8);
     // _pio_spi.write_byte((0x51) as u8);
+
+
+    // put like 4 bytes in a queue, and read
+    for i in [0xa7u32, 0x51u32, 24u32].iter() {
+        _pio_spi.write_word(*i);
+
+        let val = _receive_spi.read_word().unwrap();
+        debug!("We have received this value: {val}");
+        _receive_spi.write_word(val);
+    }
+
+    for i in 0..100 {
+        let val = _receive_spi.read_word().unwrap();
+        debug!("We have received this value: {val}");
+        _receive_spi.write_word(val);
+    }
 
     for _ in 0..10 {
         pin6.toggle();

@@ -53,6 +53,30 @@ impl<'a> PioSpi<'a> {
             pio_number: pio_number,
         }
     }
+
+    pub fn read_word(&self) -> Result<u32, ErrorCode> {
+        let mut data: u32 = 0;
+        self.pio.map(|pio| {
+            // Read data from the RX FIFO
+            data = pio.sm_get(self.sm_number);
+        });
+
+        Ok(data)
+    }
+
+    pub fn write_word(&self, val: u32) -> Result<(), ErrorCode> {
+        self.pio.map(|pio| {
+            // Waits until the state machine TX FIFO is empty, then write the byte of data
+            pio.sm_put(self.sm_number, val as u32);
+            // pio.sm_put(SMNumber::SM0, 0xA1B2C3D4);
+            // pio.sm_put(SMNumber::SM0, 0xA1B2C3D4);
+        });
+
+        Ok(())
+    }
+
+
+
 }
 
 impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
