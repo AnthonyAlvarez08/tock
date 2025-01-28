@@ -680,13 +680,13 @@ pub unsafe fn start() -> (
 
 
     // put like 4 bytes in a queue, and read
-    // for i in [0xa7u32, 0x51u32, 24u32].iter() {
-    //     _pio_spi.write_word(*i);
+    for i in [0xB4u32, 0xD3u32, 0x24u32].iter() {
+        _pio_spi.write_word(*i);
 
-    //     let val = _receive_spi.read_word().unwrap();
-    //     debug!("We have received this value: {val}");
-    //     _receive_spi.write_word(val);
-    // }
+        let val = _receive_spi.read_word().unwrap();
+        // debug!("We have received this value: {val}");
+        // _receive_spi.write_word(val);
+    }
 
     // for i in 0..100 {
     //     let val = _receive_spi.read_word().unwrap();
