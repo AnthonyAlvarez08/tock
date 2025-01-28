@@ -649,6 +649,8 @@ pub unsafe fn start() -> (
 
     let _ = _pio_spi.init();
     let _ = _receive_spi.init();
+
+
     // write the character A for example
     // for i in 0..20 {
     //     let _ = _pio_spi.write_byte((0x41 + i as u8) as u8);
@@ -673,24 +675,24 @@ pub unsafe fn start() -> (
 
 
 
-    // _pio_spi.write_byte((0xA7) as u8);
-    // _pio_spi.write_byte((0x51) as u8);
+    _pio_spi.write_byte((0xA7) as u8);
+    _pio_spi.write_byte((0x51) as u8);
 
 
     // put like 4 bytes in a queue, and read
-    for i in [0xa7u32, 0x51u32, 24u32].iter() {
-        _pio_spi.write_word(*i);
+    // for i in [0xa7u32, 0x51u32, 24u32].iter() {
+    //     _pio_spi.write_word(*i);
 
-        let val = _receive_spi.read_word().unwrap();
-        debug!("We have received this value: {val}");
-        _receive_spi.write_word(val);
-    }
+    //     let val = _receive_spi.read_word().unwrap();
+    //     debug!("We have received this value: {val}");
+    //     _receive_spi.write_word(val);
+    // }
 
-    for i in 0..100 {
-        let val = _receive_spi.read_word().unwrap();
-        debug!("We have received this value: {val}");
-        _receive_spi.write_word(val);
-    }
+    // for i in 0..100 {
+    //     let val = _receive_spi.read_word().unwrap();
+    //     debug!("We have received this value: {val}");
+    //     _receive_spi.write_word(val);
+    // }
 
     for _ in 0..10 {
         pin6.toggle();

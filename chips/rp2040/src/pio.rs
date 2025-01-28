@@ -1373,8 +1373,11 @@ impl Pio {
 
         self.set_pins_out(sm_number, out_pin, 1, true);
         self.set_out_pins(sm_number, out_pin, config.out_pins_count);
+        
+        
         self.set_side_set_pins(sm_number, side_set_pin);
-        self.set_side_set(sm_number, config.side_set_bit_count, false, false);
+        self.set_pins_out(sm_number, side_set_pin, 1, true); // pwm_pio did this
+        // self.set_side_set(sm_number, config.side_set_bit_count, false, false);
         self.set_in_pins(sm_number, in_pin);
 
         self.sm_init(sm_number);
