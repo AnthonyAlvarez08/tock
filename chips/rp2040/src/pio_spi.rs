@@ -74,9 +74,6 @@ impl<'a> PioSpi<'a> {
 
         Ok(())
     }
-
-
-
 }
 
 impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
@@ -86,42 +83,42 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     fn init(&self) -> Result<(), ErrorCode> {
         /*
 
-        implements this program for now
-        https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/spi.pio
+                implements this program for now
+                https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/spi.pio
 
-        assembly found here I think on line 63
-
-
-        .pio_version 0 // only requires PIO version 0
-        https://github.com/zephyrproject-rtos/zephyr/blob/main/drivers/spi/spi_rpi_pico_pio.c
-
-        #define SPI_MODE_0_0_WRAP_TARGET 0
-#define SPI_MODE_0_0_WRAP        1
-#define SPI_MODE_0_0_CYCLES      4
+                assembly found here I think on line 63
 
 
+                .pio_version 0 // only requires PIO version 0
+                https://github.com/zephyrproject-rtos/zephyr/blob/main/drivers/spi/spi_rpi_pico_pio.c
 
-        .program spi_cpha0
-        .side_set 1
+                #define SPI_MODE_0_0_WRAP_TARGET 0
+        #define SPI_MODE_0_0_WRAP        1
+        #define SPI_MODE_0_0_CYCLES      4
 
-        ; Pin assignments:
-        ; - SCK is side-set pin 0
-        ; - MOSI is OUT pin 0
-        ; - MISO is IN pin 0
-        ;
-        ; Autopush and autopull must be enabled, and the serial frame size is set by
-        ; configuring the push/pull threshold. Shift left/right is fine, but you must
-        ; justify the data yourself. This is done most conveniently for frame sizes of
-        ; 8 or 16 bits by using the narrow store replication and narrow load byte
-        ; picking behaviour of RP2040's IO fabric.
 
-        ; Clock phase = 0: data is captured on the leading edge of each SCK pulse, and
-        ; transitions on the trailing edge, or some time before the first leading edge.
 
-            out pins, 1 side 0 [1] ; Stall here on empty (sideset proceeds even if
-            in pins, 1  side 1 [1] ; instruction stalls, so we stall with SCK low)
+                .program spi_cpha0
+                .side_set 1
 
-        */
+                ; Pin assignments:
+                ; - SCK is side-set pin 0
+                ; - MOSI is OUT pin 0
+                ; - MISO is IN pin 0
+                ;
+                ; Autopush and autopull must be enabled, and the serial frame size is set by
+                ; configuring the push/pull threshold. Shift left/right is fine, but you must
+                ; justify the data yourself. This is done most conveniently for frame sizes of
+                ; 8 or 16 bits by using the narrow store replication and narrow load byte
+                ; picking behaviour of RP2040's IO fabric.
+
+                ; Clock phase = 0: data is captured on the leading edge of each SCK pulse, and
+                ; transitions on the trailing edge, or some time before the first leading edge.
+
+                    out pins, 1 side 0 [1] ; Stall here on empty (sideset proceeds even if
+                    in pins, 1  side 1 [1] ; instruction stalls, so we stall with SCK low)
+
+                */
 
         let asm: [u8; 4] = [
             // these were 4 digit hex numbers in the zephyr one
@@ -179,7 +176,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             // custom_config.side_set_opt_enable = true;
             // custom_config.side_set_pindirs = true;
 
-
             custom_config.wrap = 1;
 
             // custom_config.in_push_threshold = 8;
@@ -195,7 +191,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
                 self.out_pin,
                 &custom_config,
             );
-
         });
 
         Ok(())
