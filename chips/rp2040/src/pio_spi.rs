@@ -58,7 +58,7 @@ impl<'a> PioSpi<'a> {
         let mut data: u32 = 0;
         self.pio.map(|pio| {
             // Read data from the RX FIFO
-            data = pio.sm_get(self.sm_number);
+            data = pio.sm(self.sm_number).pull().unwrap();
         });
 
         Ok(data)
@@ -67,7 +67,7 @@ impl<'a> PioSpi<'a> {
     pub fn write_word(&self, val: u32) -> Result<(), ErrorCode> {
         self.pio.map(|pio| {
             // Waits until the state machine TX FIFO is empty, then write the byte of data
-            pio.sm_put(self.sm_number, val as u32);
+            pio.sm(self.sm_number).push(val as u32);
             // pio.sm_put(SMNumber::SM0, 0xA1B2C3D4);
             // pio.sm_put(SMNumber::SM0, 0xA1B2C3D4);
         });
@@ -159,7 +159,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
         self.pio.map(|pio| {
             pio.init();
-            pio.add_program(&asm);
+            pio.add_program(Some(0), &asm);
 
             // TODO: add custom configurations if necessary
             let mut custom_config = StateMachineConfiguration::default();
@@ -184,7 +184,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             custom_config.out_autopull = true;
 
             pio.spi_program_init(
-                self.pio_number,
                 self.sm_number,
                 self.side_set_pin,
                 self.in_pin,
@@ -220,7 +219,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
         self.pio.map(|pio| {
             // Waits until the state machine TX FIFO is empty, then write the byte of data
-            pio.sm_put(self.sm_number, val as u32);
+            pio.sm(self.sm_number).push(val as u32);
             // pio.sm_put(SMNumber::SM0, 0xA1B2C3D4);
             // pio.sm_put(SMNumber::SM0, 0xA1B2C3D4);
         });
@@ -232,7 +231,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         let mut data: u32 = 0;
         self.pio.map(|pio| {
             // Read data from the RX FIFO
-            data = pio.sm_get(self.sm_number);
+            data = pio.sm(self.sm_number).pull().unwrap();
         });
 
         Ok(data as u8)
