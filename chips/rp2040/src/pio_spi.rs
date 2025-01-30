@@ -66,10 +66,8 @@ impl<'a> PioSpi<'a> {
 
     pub fn write_word(&self, val: u32) -> Result<(), ErrorCode> {
         self.pio.map(|pio| {
-            // Waits until the state machine TX FIFO is empty, then write the byte of data
-            pio.sm(self.sm_number).push(val as u32);
-            // pio.sm_put(SMNumber::SM0, 0xA1B2C3D4);
-            // pio.sm_put(SMNumber::SM0, 0xA1B2C3D4);
+
+            pio.sm(self.sm_number).push_blocking(val);
         });
 
         Ok(())
@@ -159,27 +157,23 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
         self.pio.map(|pio| {
             pio.init();
-            pio.add_program(Some(0), &asm);
+            pio.add_program(None::<usize>, &asm);
 
             // TODO: add custom configurations if necessary
             let mut custom_config = StateMachineConfiguration::default();
 
             // the program requires auto push and pull to be on
 
-            // custom_config.div_frac = 0;
-            // custom_config.div_int = 1;
+
             custom_config.side_set_base = self.side_set_pin;
             custom_config.in_pins_base = self.in_pin;
             custom_config.out_pins_base = self.out_pin;
             custom_config.side_set_bit_count = 1;
-            // custom_config.out_pins_count = 32; //1;
-            // custom_config.side_set_opt_enable = true;
-            // custom_config.side_set_pindirs = true;
+
 
             custom_config.wrap = 1;
 
-            // custom_config.in_push_threshold = 8;
-            // custom_config.out_pull_threshold = 8;
+
             custom_config.in_autopush = true;
             custom_config.out_autopull = true;
 
@@ -219,9 +213,9 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
         self.pio.map(|pio| {
             // Waits until the state machine TX FIFO is empty, then write the byte of data
+
             pio.sm(self.sm_number).push(val as u32);
-            // pio.sm_put(SMNumber::SM0, 0xA1B2C3D4);
-            // pio.sm_put(SMNumber::SM0, 0xA1B2C3D4);
+
         });
 
         Ok(())
