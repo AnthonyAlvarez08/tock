@@ -1163,6 +1163,10 @@ impl StateMachine {
         Ok(self.registers.rxf[self.sm_number as usize].read(RXFx::RXF))
     }
 
+    pub fn just_pull(&self) -> Result<u32, ErrorCode> {
+        Ok(self.registers.rxf[self.sm_number as usize].read(RXFx::RXF))
+    }
+
     /// Handle a TX interrupt - notify that buffer space is available.
     fn handle_tx_interrupt(&self) {
         match self.tx_state.get() {
@@ -1741,7 +1745,7 @@ mod examples {
             sm.exec(out_isr_32_command);
             sm.set_enabled(true);
         }
- 
+
         pub fn spi_program_init(
             &mut self,
             sm_number: SMNumber,
@@ -1758,20 +1762,17 @@ mod examples {
             self.gpio_init(&RPGpioPin::new(RPGpio::from_u32(out_pin)));
 
             sm.set_enabled(false);
-            
+
             // IMPORTANT
             // make the sideset pin an output pin to finagle with its settings
             // then make it a side set pin
             // ALSO make sure to do all of this BEFORE setting the outpin as an outpin
-            sm.set_out_pins(side_set_pin, 1); 
-            sm.set_pins_dirs(side_set_pin, 1, true); 
+            sm.set_out_pins(side_set_pin, 1);
+            sm.set_pins_dirs(side_set_pin, 1, true);
             sm.set_side_set_pins(side_set_pin, 1, false, false); // do not switch pin dirs again, it will mess with the output settings
-            
 
             sm.set_pins_dirs(out_pin, 1, true);
             sm.set_out_pins(out_pin, config.out_pins_count);
-            
-            
 
             sm.init();
             sm.set_enabled(true);
