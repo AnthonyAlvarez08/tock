@@ -636,21 +636,21 @@ pub unsafe fn start() -> (
         PIONumber::PIO0,
     );
 
-    // let mut pio2 = Pio::new_pio1();
-    // let _receive_spi = PioSpi::new(
-    //     &mut pio2,
-    //     &clocks,
-    //     19, // sideset
-    //     20, // in
-    //     21, // out
-    //     SMNumber::SM1,
-    //     PIONumber::PIO1,
-    // );
+    let mut pio2 = Pio::new_pio1();
+    let _receive_spi = PioSpi::new(
+        &mut pio2,
+        &clocks,
+        19, // sideset
+        20, // in
+        21, // out
+        SMNumber::SM1,
+        PIONumber::PIO1,
+    );
 
 
     // debug!("Attempting to initialize PIO");
     let _ = _pio_spi.init();
-    // let _ = _receive_spi.init();
+    let _ = _receive_spi.init();
 
 
     // write the character A for example
@@ -677,26 +677,26 @@ pub unsafe fn start() -> (
 
 
 
-    _pio_spi.write_byte((0xA7) as u8);
+    // _pio_spi.write_byte((0xA7) as u8);
 
 
     // debug!("wrote one");
 
-    _pio_spi.write_byte((0x51) as u8);
+    // _pio_spi.write_byte((0x51) as u8);
 
     // debug!("wrote two");
 
 
     // put like 4 bytes in a queue, and read
-    // will not print out 0x31432u32 as only has space for 5 things
+    // seems to have space for 5 items only
     for i in [0xB4u32, 0xD3u32, 0x24423u32, 0x31432u32] {
         // debug!("writing word");
         _pio_spi.write_word(i);
         // debug!("finished writing word");
 
-        // let val = _receive_spi.read_word().unwrap();
+        let val = _receive_spi.read_word().unwrap();
         // debug!("We have received this value: {val}");
-        // _receive_spi.write_word(val);
+        _receive_spi.write_word(val);
     }
 
     // for i in 0..100 {
@@ -710,7 +710,7 @@ pub unsafe fn start() -> (
         // debug!("Toggled!!\n");
     }
 
-    // debug!("Maybe initialized PIO SPI?\n");
+ 
 
     // let mut pio: Pio = Pio::new_pio0();
 

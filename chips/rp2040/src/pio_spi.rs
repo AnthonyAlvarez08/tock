@@ -58,7 +58,7 @@ impl<'a> PioSpi<'a> {
         let mut data: u32 = 0;
         self.pio.map(|pio| {
             // Read data from the RX FIFO
-            data = pio.sm(self.sm_number).pull().unwrap();
+            data = pio.sm(self.sm_number).just_pull().unwrap();
         });
 
         Ok(data)
@@ -164,7 +164,11 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
             // the program requires auto push and pull to be on
 
-
+            // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/spi_loopback.c
+            //
+            //  float clkdiv = 31.25f;  // 1 MHz @ 125 clk_sys
+            custom_config.div_int = 31;
+            custom_config.div_frac = 64;
             custom_config.side_set_base = self.side_set_pin;
             custom_config.in_pins_base = self.in_pin;
             custom_config.out_pins_base = self.out_pin;
@@ -225,7 +229,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         let mut data: u32 = 0;
         self.pio.map(|pio| {
             // Read data from the RX FIFO
-            data = pio.sm(self.sm_number).pull().unwrap();
+            data = pio.sm(self.sm_number).just_pull().unwrap();
         });
 
         Ok(data as u8)
