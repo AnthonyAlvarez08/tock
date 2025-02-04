@@ -629,7 +629,7 @@ pub unsafe fn start() -> (
     let _pio_spi = PioSpi::new(
         &mut pio,
         &clocks,
-        10, // side set
+        10, // side set = clock
         11, // in
         12, // out
         SMNumber::SM0,
@@ -640,10 +640,10 @@ pub unsafe fn start() -> (
     let _receive_spi = PioSpi::new(
         &mut pio2,
         &clocks,
-        19, // sideset
+        19, // sideset = clock
         20, // in
         21, // out
-        SMNumber::SM1,
+        SMNumber::SM0,
         PIONumber::PIO1,
     );
 
@@ -653,64 +653,59 @@ pub unsafe fn start() -> (
     let _ = _receive_spi.init();
 
 
-    // write the character A for example
-    // for i in 0..20 {
-    //     let _ = _pio_spi.write_byte((0x41 + i as u8) as u8);
-        
-    //     debug!("attempting to write the character A\n");
-    // }
+    _receive_spi.clear_fifos();
+    _pio_spi.clear_fifos();
+    _receive_spi.block_until_empty();
+    _pio_spi.block_until_empty();
 
-
-
-
-
-    // _pio_spi.write_byte((0xA7) as u8);
-    // let val = _receive_spi.read_byte().unwrap();
-    // debug!("We have received this value: {val}");
-    // _pio_spi.write_byte((0xB6) as u8);
-    // let val = _receive_spi.read_byte().unwrap();
-    // debug!("We have received this value: {val}");
-    // _receive_spi.write_byte(_receive_spi.read_byte().unwrap());
-
-
-    // debug!("Attempting to write");
-
-
-
-    // _pio_spi.write_byte((0xA7) as u8);
-
-
-    // debug!("wrote one");
-
-    // _pio_spi.write_byte((0x51) as u8);
-
-    // debug!("wrote two");
-
+    debug!("empty rx on receive spi");
 
     // put like 4 bytes in a queue, and read
     // seems to have space for 5 items only
-    for i in [0xB4u32, 0xD3u32, 0x24423u32, 0x31432u32] {
-        // debug!("writing word");
-        _pio_spi.write_word(i);
-        // debug!("finished writing word");
+    // should be read as [167, 212, 81, 177, 114, 246]
+    for i in [0xA7u8, 0xD4u8,  0x51u8, 0xB1u8, 0x72u8, 0xF6u8] {
+        
+        
+        debug!("writing word");
+        _pio_spi.block_until_ready_to_write();
+        _pio_spi.write_word(i as u32);
+        debug!("finished writing word");
 
-        let val = _receive_spi.read_word().unwrap();
-        // debug!("We have received this value: {val}");
+
+        // _receive_spi.block_until_ready_to_read();
+        let rxempty = _receive_spi.rx_empty();
+        debug!("Is RX empty (before read)? {rxempty}");
+        let val = _receive_spi.read_word().unwrap() >> 24;
+        debug!("We have received this value: {val}");
+        let rxempty = _receive_spi.rx_empty();
+        debug!("Is RX empty (after read)? {rxempty}");
         _receive_spi.write_word(val);
     }
 
-    // for i in 0..100 {
-    //     let val = _receive_spi.read_word().unwrap();
-    //     debug!("We have received this value: {val}");
-    //     _receive_spi.write_word(val);
-    // }
+
+    let mut last: u32 = 0u32;
+    for i in 0..5000 {
+        let val = _receive_spi.read_word().unwrap() >> 24;
+        if val != last {
+            let rxempty = _receive_spi.rx_empty();
+            debug!("Is RX empty? {rxempty}");
+            debug!("We have received this value: {val} on iter {i}");
+            _receive_spi.write_word(val);
+            last = val;
+        }
+
+        // slow so should be enough for interrutps
+        // debug!("");
+        
+    }
 
     for _ in 0..10 {
         pin6.toggle();
         // debug!("Toggled!!\n");
     }
 
- 
+    // let val = _receive_spi.read_word().unwrap() >> 24;
+    // debug!("We have received this value: {val}");
 
     // let mut pio: Pio = Pio::new_pio0();
 

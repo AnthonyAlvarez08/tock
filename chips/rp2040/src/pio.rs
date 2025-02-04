@@ -994,6 +994,17 @@ impl StateMachine {
         self.registers.fstat.read(field) != 0
     }
 
+    /// Returns true if the TX FIFO is empty.
+    pub fn tx_empty(&self) -> bool {
+        let field = match self.sm_number {
+            SMNumber::SM0 => FSTAT::TXEMPTY0,
+            SMNumber::SM1 => FSTAT::TXEMPTY1,
+            SMNumber::SM2 => FSTAT::TXEMPTY2,
+            SMNumber::SM3 => FSTAT::TXEMPTY3,
+        };
+        self.registers.fstat.read(field) != 0
+    }
+
     /// Immediately execute an instruction on a state machine.
     ///
     /// => instr: the instruction to execute
@@ -1157,14 +1168,39 @@ impl StateMachine {
     /// If SM is stalled on TX or in loop, this will block forever.
     pub fn pull_blocking(&self) -> Result<u32, ErrorCode> {
         if self.tx_full() && !self.is_enabled() {
+            debug!("either tx full or not enabled");
             return Err(ErrorCode::OFF);
         }
-        while self.rx_empty() {}
+        while self.rx_empty() {
+            debug!("rx empty");
+        }
         Ok(self.registers.rxf[self.sm_number as usize].read(RXFx::RXF))
     }
 
     pub fn just_pull(&self) -> Result<u32, ErrorCode> {
         Ok(self.registers.rxf[self.sm_number as usize].read(RXFx::RXF))
+    }
+
+
+    pub fn get_interrupt_sources(&self) -> [InterruptSources; 2]
+    {
+        let res = match self.sm_number {
+            SMNumber::SM0 => {
+                [InterruptSources::Sm0TXNotFull, InterruptSources::Sm0RXNotEmpty]
+            }
+            SMNumber::SM1 => {
+                [InterruptSources::Sm1TXNotFull, InterruptSources::Sm1RXNotEmpty]
+            }
+            SMNumber::SM2 => {
+                [InterruptSources::Sm2TXNotFull, InterruptSources::Sm2RXNotEmpty]
+            }
+            SMNumber::SM3 => {
+                [InterruptSources::Sm3TXNotFull, InterruptSources::Sm3RXNotEmpty]
+            }
+        };
+
+        res
+        
     }
 
     /// Handle a TX interrupt - notify that buffer space is available.
@@ -1775,6 +1811,7 @@ mod examples {
             sm.set_out_pins(out_pin, config.out_pins_count);
 
             sm.init();
+            sm.clear_fifos();
             sm.set_enabled(true);
         }
 

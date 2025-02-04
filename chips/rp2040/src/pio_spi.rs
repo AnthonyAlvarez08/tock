@@ -8,7 +8,7 @@
 //! Programmable Input Output (PIO) hardware test file.
 use crate::clocks::{self};
 use crate::gpio::{GpioFunction, RPGpio, RPGpioPin};
-use crate::pio::{PIONumber, Pio, SMNumber, StateMachineConfiguration};
+use crate::pio::{PIONumber, Pio, SMNumber, StateMachineConfiguration, PioTxClient, PioRxClient};
 use kernel::debug;
 use kernel::hil::spi::cs::ChipSelectPolar;
 use kernel::hil::spi::SpiMaster;
@@ -33,6 +33,39 @@ pub struct PioSpi<'a> {
     pio_number: PIONumber,
 }
 
+
+static queueClient : QueueClient<'static> = QueueClient::<'_> { wahoo: &0};
+
+
+//* experimenting with having a singleton (or rather a doubleton) PioSpi Class
+//* as there should only be two of them anyway
+
+// static mut pio0 = Pio::new_pio0();
+// static clocks = Clocks::new();
+
+// static PioSpi0 : PioSpi<'static> = PioSpi::new(
+//     &mut pio0,
+//     &clocks,
+//     10, // side set = clock
+//     11, // in
+//     12, // out
+//     SMNumber::SM0,
+//     PIONumber::PIO0,
+// );
+
+// static mut pio1 = Pio::new_pio1();
+
+// static PioSpi1 : PioSpi<'static> = PioSpi::new(
+//     &mut pio1,
+//     &clocks,
+//     19, // sideset = clock
+//     20, // in
+//     21, // out
+//     SMNumber::SM1,
+//     PIONumber::PIO1,
+// );
+
+
 impl<'a> PioSpi<'a> {
     pub fn new(
         pio: &'a mut Pio,
@@ -54,10 +87,49 @@ impl<'a> PioSpi<'a> {
         }
     }
 
+    pub fn block_until_empty(&self) {
+        self.pio.map(|pio| {
+            while !pio.sm(self.sm_number).rx_empty() || !pio.sm(self.sm_number).tx_empty() {
+                self.clear_fifos();
+            }
+        });
+    }
+
+    pub fn block_until_ready_to_read(&self) {
+        self.pio.map(|pio| {
+            while pio.sm(self.sm_number).rx_empty() {
+            
+            }
+        });
+        
+    }
+
+    pub fn block_until_ready_to_write(&self) {
+        self.pio.map(|pio| {
+            while pio.sm(self.sm_number).tx_full() {
+            
+            }
+        });
+        
+    }
+
+    pub fn rx_empty(&self) -> bool {
+        let mut empty : bool = true;
+        self.pio.map(|pio| {
+            if !pio.sm(self.sm_number).rx_empty() {
+                empty = false;
+            }
+        });
+
+        empty
+        
+    }
+
     pub fn read_word(&self) -> Result<u32, ErrorCode> {
         let mut data: u32 = 0;
         self.pio.map(|pio| {
             // Read data from the RX FIFO
+            pio.handle_interrupt();
             data = pio.sm(self.sm_number).just_pull().unwrap();
         });
 
@@ -66,11 +138,17 @@ impl<'a> PioSpi<'a> {
 
     pub fn write_word(&self, val: u32) -> Result<(), ErrorCode> {
         self.pio.map(|pio| {
-
+            pio.handle_interrupt();
             pio.sm(self.sm_number).push_blocking(val);
         });
 
         Ok(())
+    }
+
+    pub fn clear_fifos(&self) {
+        self.pio.map(|pio| {
+            pio.sm(self.sm_number).clear_fifos();
+        });
     }
 }
 
@@ -118,11 +196,11 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
                 */
 
-        let asm: [u8; 4] = [
+        let asm: [u16; 2] = [
             // these were 4 digit hex numbers in the zephyr one
             // maybe it will work fine if I split them?
-            0x61, 0x01, /*  0: out    pins, 1         side 0 [1] */
-            0x51, 0x01, /*  1: in     pins, 1         side 1 [1] */
+            0x6101, /*  0: out    pins, 1         side 0 [1] */
+            0x5101, /*  1: in     pins, 1         side 1 [1] */
         ];
 
         /*
@@ -157,7 +235,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
         self.pio.map(|pio| {
             pio.init();
-            pio.add_program(None::<usize>, &asm);
+            pio.add_program16(None::<usize>, &asm);
 
             // TODO: add custom configurations if necessary
             let mut custom_config = StateMachineConfiguration::default();
@@ -167,8 +245,14 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/spi_loopback.c
             //
             //  float clkdiv = 31.25f;  // 1 MHz @ 125 clk_sys
-            custom_config.div_int = 31;
-            custom_config.div_frac = 64;
+            // custom_config.div_int = 31;
+            // custom_config.div_frac = 64; // is 64/256 = 1/4
+
+            // should be able to work on bytes according to the PIO manual
+            custom_config.in_push_threshold = 8;
+            custom_config.out_pull_threshold = 8;
+
+
             custom_config.side_set_base = self.side_set_pin;
             custom_config.in_pins_base = self.in_pin;
             custom_config.out_pins_base = self.out_pin;
@@ -188,6 +272,22 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
                 self.out_pin,
                 &custom_config,
             );
+
+            // subscribe to interrumts
+            // for i in pio.sm(self.sm_number).get_interrupt_sources() {
+            //     pio.set_irq_source(0, i, true);
+            // }
+            // for i in pio.sm(self.sm_number).get_interrupt_sources() {
+            //     pio.set_irq_source(1, i, true);
+            // }
+
+
+
+            // subscribe to the interrupts I guess?
+            pio.sm(self.sm_number).set_tx_client(&queueClient);
+            pio.sm(self.sm_number).set_rx_client(&queueClient);
+
+            
         });
 
         Ok(())
@@ -216,10 +316,8 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
         self.pio.map(|pio| {
-            // Waits until the state machine TX FIFO is empty, then write the byte of data
-
-            pio.sm(self.sm_number).push(val as u32);
-
+            pio.handle_interrupt();
+            pio.sm(self.sm_number).push_blocking(val as u32);
         });
 
         Ok(())
@@ -229,6 +327,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         let mut data: u32 = 0;
         self.pio.map(|pio| {
             // Read data from the RX FIFO
+            pio.handle_interrupt();
             data = pio.sm(self.sm_number).just_pull().unwrap();
         });
 
@@ -270,4 +369,56 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     fn hold_low(&self) {}
 
     fn release_low(&self) {}
+}
+
+// TODO: implement PioTxClient
+// TODO: implement PioRxCLient
+
+/*
+
+pub trait PioTxClient {
+    fn on_buffer_space_available(&self);
+}
+
+pub trait PioRxClient {
+    fn on_data_received(&self, data: u32);
+}
+
+*/
+
+impl<'a> PioTxClient for PioSpi<'a> {
+    fn on_buffer_space_available(&self) {
+        debug!("buffer space available");
+    }
+}
+
+impl<'a> PioRxClient for PioSpi<'a> {
+    
+    fn on_data_received(&self, data: u32) {
+        debug!("Received data {data}");
+    }
+}
+
+
+struct QueueClient<'a> {
+    wahoo: &'a i32
+}
+
+impl <'a> QueueClient<'a> {
+    pub fn new() -> Self {
+        Self { wahoo: &0 }
+    }
+}
+
+impl<'a> PioTxClient for QueueClient<'a> {
+    fn on_buffer_space_available(&self) {
+        debug!("buffer space available");
+    }
+}
+
+impl<'a> PioRxClient for QueueClient<'a> {
+
+    fn on_data_received(&self, data: u32) {
+        debug!("Received data {data}");
+    }
 }
