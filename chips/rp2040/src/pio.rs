@@ -1172,7 +1172,7 @@ impl StateMachine {
             return Err(ErrorCode::OFF);
         }
         while self.rx_empty() {
-            debug!("rx empty");
+            // debug!("rx empty");
         }
         Ok(self.registers.rxf[self.sm_number as usize].read(RXFx::RXF))
     }

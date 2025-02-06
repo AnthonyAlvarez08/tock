@@ -92,18 +92,6 @@ impl<'a> PioSpi<'a> {
         }
     }
 
-    pub fn block_until_ready_to_read(&self) {
-        while self.pio.sm(self.sm_number).rx_empty() {}
-    }
-
-    pub fn block_until_ready_to_write(&self) {
-        while self.pio.sm(self.sm_number).tx_full() {}
-    }
-
-    pub fn block_until_all_writen(&self) {
-        while !self.pio.sm(self.sm_number).tx_empty() {}
-    }
-
     pub fn rx_empty(&self) -> bool {
         let mut empty: bool = true;
         if !self.pio.sm(self.sm_number).rx_empty() {
@@ -124,15 +112,6 @@ impl<'a> PioSpi<'a> {
             self.pio.sm(self.sm_number).push_blocking(0);
         }
 
-        data = self.pio.sm(self.sm_number).just_pull().unwrap();
-
-        Ok(data)
-    }
-
-    pub fn read_word_blocking(&self) -> Result<u32, ErrorCode> {
-        let mut data: u32 = 0;
-        // Read data from the RX FIFO
-        self.pio.handle_interrupt();
         data = self.pio.sm(self.sm_number).pull_blocking().unwrap();
 
         Ok(data)
@@ -145,15 +124,18 @@ impl<'a> PioSpi<'a> {
         // in this example they reading and dumping after they're writing
         self.pio.sm(self.sm_number).push_blocking(val);
 
-        let _ = self.pio.sm(self.sm_number).just_pull().unwrap();
+        if !self.pio.sm(self.sm_number).rx_empty() {
+            let _ = self.pio.sm(self.sm_number).pull_blocking().unwrap();
+        }
 
         Ok(())
     }
 
+    pub fn restart_clock(&self) {
+        self.pio.sm(self.sm_number).clkdiv_restart();
+    }
+
     pub fn clear_fifos(&self) {
-        // for _ in 0..4 {
-        //     let __ = self.pio.sm(self.sm_number).just_pull();
-        // }
         self.pio.sm(self.sm_number).clear_fifos();
     }
 }
@@ -268,16 +250,14 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         );
 
         // subscribe to interrupts
-        debug!("Now enabling interrupts\n");
-
-        // let irq_index = if self.pio.pio_number == PIONumber::PIO0 {
-        //     0
-        // } else {
-        //     1
-        // };
+        //*  currently doesnt work
+        // debug!("Now enabling interrupts\n");
 
         // for i in self.pio.sm(self.sm_number).get_interrupt_sources() {
         //     self.pio.set_irq_source(0, i, true);
+        // }
+        // for i in self.pio.sm(self.sm_number).get_interrupt_sources() {
+        //     self.pio.set_irq_source(1, i, true);
         // }
 
         // subscribe to the interrupts I guess?

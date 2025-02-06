@@ -597,7 +597,6 @@ pub unsafe fn start() -> (
     _pio_spi.clear_fifos();
     _receive_spi.block_until_empty();
     _pio_spi.block_until_empty();
-
     debug!("empty rx on receive spi");
 
     // put like 4 bytes in a queue, and read
@@ -607,82 +606,75 @@ pub unsafe fn start() -> (
         0xA7u8, 0xD4u8, 0x51u8, 0xB1u8, 0x72u8, 0xF6u8, 0xC5u8, 0x71u8, 0xE3u8,
     ] {
         debug!("writing word");
-        _pio_spi.block_until_ready_to_write();
+        // _pio_spi.block_until_ready_to_write();
         _pio_spi.write_word(i as u32);
         // debug!("finished writing word");
 
-        // _pio_spi.block_until_all_writen();
-
-        // _receive_spi.block_until_ready_to_read();
-        // let rxempty = _receive_spi.rx_empty();
-        // debug!("Is RX empty (before read)? {rxempty}");
         let val = _receive_spi.read_word().unwrap();
         debug!("recv this value: {val}");
-        // let rxempty = _receive_spi.rx_empty();
-        // debug!("Is RX empty (after read)? {rxempty}");
+
         _receive_spi.write_word(val);
     }
 
-    let mut last: u32 = 0u32;
-    for i in 0..5000 {
-        let val = _receive_spi.read_word().unwrap();
-        if val != last {
-            // let rxempty = _receive_spi.rx_empty();
-            // debug!("Is RX empty? {rxempty}");
-            debug!("recv value: {val} on iter {i}");
-            _receive_spi.write_word(val);
-            last = val;
-        }
-
-        // slow so should be enough for interrutps
-        // debug!("");
-    }
-
-    _receive_spi.clear_fifos();
-    _pio_spi.clear_fifos();
-    _receive_spi.block_until_empty();
-    _pio_spi.block_until_empty();
-
     debug!("Trying to write a sentence");
 
-    // try to write out some characters
+    // put like 4 bytes in a queue, and read
+    // seems to have space for 5 items only
+    // should be read as "Tock OS"
+    // [0x54u8, 0x6fu8, 0x63u8, 0x6bu8, 0x20u8, 0x4fu8, 0x53u8]
+    // 0..20
     for i in ['T', 'o', 'c', 'k', ' ', 'O', 'S'] {
-        // debug!("writing word");
-        _pio_spi.block_until_ready_to_write();
+        debug!("writing word");
+        // _pio_spi.block_until_ready_to_write();
         _pio_spi.write_word(u32::from(i));
         // debug!("finished writing word");
 
         let val = _receive_spi.read_word().unwrap();
-        if val != 0 {
-            let repr = char::from_u32(val);
-            let repr = match repr {
-                Some(x) => x,
-                _ => '\t',
-            };
-            debug!("recv value: {val}/{repr}");
-        } else {
-            debug!("recv 0");
-        }
+        let repr = match char::from_u32(val) {
+            Some(x) => x,
+            _ => '\t',
+        };
+        debug!("recv this value: {val}/{repr}");
 
-        _receive_spi.write_word(val as u32);
+        _receive_spi.write_word(val);
     }
 
-    let mut last = 0u32;
-    for i in 0..100_000 {
-        let val = _receive_spi.read_word().unwrap();
-        if val != last {
-            let repr = char::from_u32(val);
-            let repr = match repr {
-                Some(x) => x,
-                _ => '\t',
-            };
-            debug!("recv value: {val}/{repr} on iter {i}");
-            _receive_spi.write_word(val);
-            last = val;
-        }
+    debug!("Trying to write alphabet");
 
-        // slow so should be enough for interrutps
-        // debug!("");
+    // put like 4 bytes in a queue, and read
+    // seems to have space for 5 items only
+    // should be read as "ABCDE"
+    //
+    // 0..20
+    for i in ['A', 'B', 'C', 'D', 'E'] {
+        debug!("writing word");
+
+        _pio_spi.write_word(u32::from(i));
+        // debug!("finished writing word");
+
+        let val = _receive_spi.read_word().unwrap();
+        let repr = match char::from_u32(val) {
+            Some(x) => x,
+            _ => '\t',
+        };
+        debug!("recv this value: {val}/{repr}");
+
+        _receive_spi.write_word(val);
+    }
+
+    debug!("Trying to write alphabet");
+
+    // put like 4 bytes in a queue, and read
+    // seems to have space for 5 items only
+    for i in [21, 78, 245, 90, 63] {
+        debug!("writing word");
+
+        _pio_spi.write_word(i as u32);
+
+        let val = _receive_spi.read_word().unwrap();
+        debug!("recv this value: {val}");
+
+        _receive_spi.write_word(val);
     }
 
     for _ in 0..10 {
