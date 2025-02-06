@@ -609,27 +609,74 @@ pub unsafe fn start() -> (
         debug!("writing word");
         _pio_spi.block_until_ready_to_write();
         _pio_spi.write_word(i as u32);
-        debug!("finished writing word");
+        // debug!("finished writing word");
 
         // _pio_spi.block_until_all_writen();
 
         // _receive_spi.block_until_ready_to_read();
-        let rxempty = _receive_spi.rx_empty();
-        debug!("Is RX empty (before read)? {rxempty}");
+        // let rxempty = _receive_spi.rx_empty();
+        // debug!("Is RX empty (before read)? {rxempty}");
         let val = _receive_spi.read_word().unwrap();
-        debug!("We have received this value: {val}");
-        let rxempty = _receive_spi.rx_empty();
-        debug!("Is RX empty (after read)? {rxempty}");
+        debug!("recv this value: {val}");
+        // let rxempty = _receive_spi.rx_empty();
+        // debug!("Is RX empty (after read)? {rxempty}");
         _receive_spi.write_word(val);
     }
 
     let mut last: u32 = 0u32;
-    for i in 0..50_000 {
+    for i in 0..5000 {
         let val = _receive_spi.read_word().unwrap();
         if val != last {
-            let rxempty = _receive_spi.rx_empty();
-            debug!("Is RX empty? {rxempty}");
-            debug!("We have received this value: {val} on iter {i}");
+            // let rxempty = _receive_spi.rx_empty();
+            // debug!("Is RX empty? {rxempty}");
+            debug!("recv value: {val} on iter {i}");
+            _receive_spi.write_word(val);
+            last = val;
+        }
+
+        // slow so should be enough for interrutps
+        // debug!("");
+    }
+
+    _receive_spi.clear_fifos();
+    _pio_spi.clear_fifos();
+    _receive_spi.block_until_empty();
+    _pio_spi.block_until_empty();
+
+    debug!("Trying to write a sentence");
+
+    // try to write out some characters
+    for i in ['T', 'o', 'c', 'k', ' ', 'O', 'S'] {
+        // debug!("writing word");
+        _pio_spi.block_until_ready_to_write();
+        _pio_spi.write_word(u32::from(i));
+        // debug!("finished writing word");
+
+        let val = _receive_spi.read_word().unwrap();
+        if val != 0 {
+            let repr = char::from_u32(val);
+            let repr = match repr {
+                Some(x) => x,
+                _ => '\t',
+            };
+            debug!("recv value: {val}/{repr}");
+        } else {
+            debug!("recv 0");
+        }
+
+        _receive_spi.write_word(val as u32);
+    }
+
+    let mut last = 0u32;
+    for i in 0..100_000 {
+        let val = _receive_spi.read_word().unwrap();
+        if val != last {
+            let repr = char::from_u32(val);
+            let repr = match repr {
+                Some(x) => x,
+                _ => '\t',
+            };
+            debug!("recv value: {val}/{repr} on iter {i}");
             _receive_spi.write_word(val);
             last = val;
         }

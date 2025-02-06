@@ -151,9 +151,9 @@ impl<'a> PioSpi<'a> {
     }
 
     pub fn clear_fifos(&self) {
-        for _ in 0..4 {
-            let __ = self.pio.sm(self.sm_number).just_pull();
-        }
+        // for _ in 0..4 {
+        //     let __ = self.pio.sm(self.sm_number).just_pull();
+        // }
         self.pio.sm(self.sm_number).clear_fifos();
     }
 }
