@@ -104,6 +104,9 @@ pub struct RaspberryPiPico {
         &'static capsules_extra::date_time::DateTimeCapsule<'static, rp2040::rtc::Rtc<'static>>,
     scheduler: &'static RoundRobinSched<'static>,
     systick: cortexm0p::systick::SysTick,
+
+    pio0: &'static Pio,
+    pio1: &'static Pio,
 }
 
 impl SyscallDriverLookup for RaspberryPiPico {
@@ -547,6 +550,98 @@ pub unsafe fn start() -> (
     let scheduler = components::sched::round_robin::RoundRobinComponent::new(&*addr_of!(PROCESSES))
         .finalize(components::round_robin_component_static!(NUM_PROCS));
 
+    // TODO: does not compile due to lifetime shenanigans
+
+    let pin6 = peripherals.pins.get_pin(RPGpio::GPIO6);
+    pin6.make_output();
+
+    for _ in 0..10 {
+        pin6.toggle();
+
+        // debug!("Toggled!!\n");
+    }
+
+    // let pio = static_init!(Pio, Pio::new_pio1());
+    let _pio_spi: &mut PioSpi<'static> = static_init!(
+        PioSpi,
+        PioSpi::<'static>::new(
+            &peripherals.pio0,
+            &peripherals.clocks,
+            10, // side set = clock
+            11, // in
+            12, // out
+            SMNumber::SM0,
+            PIONumber::PIO0,
+        )
+    );
+
+    // let pio2 = static_init!(Pio, Pio::new_pio1());
+    let _receive_spi: &mut PioSpi<'static> = static_init!(
+        PioSpi,
+        PioSpi::<'static>::new(
+            &peripherals.pio1,
+            &peripherals.clocks,
+            19, // sideset = clock
+            20, // in
+            21, // out
+            SMNumber::SM1,
+            PIONumber::PIO1,
+        )
+    );
+
+    // // debug!("Attempting to initialize PIO");
+    let _ = _pio_spi.init();
+    let _ = _receive_spi.init();
+
+    _receive_spi.clear_fifos();
+    _pio_spi.clear_fifos();
+    _receive_spi.block_until_empty();
+    _pio_spi.block_until_empty();
+
+    debug!("empty rx on receive spi");
+
+    // put like 4 bytes in a queue, and read
+    // seems to have space for 5 items only
+    // should be read as [167, 212, 81, 177, 114, 246, 197, 113, 227]
+    for i in [
+        0xA7u8, 0xD4u8, 0x51u8, 0xB1u8, 0x72u8, 0xF6u8, 0xC5u8, 0x71u8, 0xE3u8,
+    ] {
+        debug!("writing word");
+        _pio_spi.block_until_ready_to_write();
+        _pio_spi.write_word(i as u32);
+        debug!("finished writing word");
+
+        // _pio_spi.block_until_all_writen();
+
+        // _receive_spi.block_until_ready_to_read();
+        let rxempty = _receive_spi.rx_empty();
+        debug!("Is RX empty (before read)? {rxempty}");
+        let val = _receive_spi.read_word().unwrap();
+        debug!("We have received this value: {val}");
+        let rxempty = _receive_spi.rx_empty();
+        debug!("Is RX empty (after read)? {rxempty}");
+        _receive_spi.write_word(val);
+    }
+
+    let mut last: u32 = 0u32;
+    for i in 0..50_000 {
+        let val = _receive_spi.read_word().unwrap();
+        if val != last {
+            let rxempty = _receive_spi.rx_empty();
+            debug!("Is RX empty? {rxempty}");
+            debug!("We have received this value: {val} on iter {i}");
+            _receive_spi.write_word(val);
+            last = val;
+        }
+
+        // slow so should be enough for interrutps
+        // debug!("");
+    }
+
+    for _ in 0..10 {
+        pin6.toggle();
+    }
+
     let raspberry_pi_pico = RaspberryPiPico {
         ipc: kernel::ipc::IPC::new(
             board_kernel,
@@ -564,6 +659,8 @@ pub unsafe fn start() -> (
 
         scheduler,
         systick: cortexm0p::systick::SysTick::new_with_calibration(125_000_000),
+        pio0: &peripherals.pio0,
+        pio1: &peripherals.pio1,
     };
 
     let platform_type = match peripherals.sysinfo.get_platform() {
@@ -610,102 +707,6 @@ pub unsafe fn start() -> (
         debug!("Error loading processes!");
         debug!("{:?}", err);
     });
-
-    let pin6 =  peripherals.pins.get_pin(RPGpio::GPIO6);
-    pin6.make_output();
-
-
-
-    
-    for _ in 0..10 {
-        pin6.toggle();
-
-        // debug!("Toggled!!\n");
-    }
-
-
-    let mut pio = Pio::new_pio0();
-    let clocks = Clocks::new();
-    let _pio_spi = PioSpi::new(
-        &mut pio,
-        &clocks,
-        10, // side set = clock
-        11, // in
-        12, // out
-        SMNumber::SM0,
-        PIONumber::PIO0,
-    );
-
-    let mut pio2 = Pio::new_pio1();
-    let _receive_spi = PioSpi::new(
-        &mut pio2,
-        &clocks,
-        19, // sideset = clock
-        20, // in
-        21, // out
-        SMNumber::SM0,
-        PIONumber::PIO1,
-    );
-
-
-    // debug!("Attempting to initialize PIO");
-    let _ = _pio_spi.init();
-    let _ = _receive_spi.init();
-
-
-    _receive_spi.clear_fifos();
-    _pio_spi.clear_fifos();
-    _receive_spi.block_until_empty();
-    _pio_spi.block_until_empty();
-
-    debug!("empty rx on receive spi");
-
-    // put like 4 bytes in a queue, and read
-    // seems to have space for 5 items only
-    // should be read as [167, 212, 81, 177, 114, 246]
-    for i in [0xA7u8, 0xD4u8,  0x51u8, 0xB1u8, 0x72u8, 0xF6u8] {
-        
-        
-        debug!("writing word");
-        _pio_spi.block_until_ready_to_write();
-        _pio_spi.write_word(i as u32);
-        debug!("finished writing word");
-
-
-        // _receive_spi.block_until_ready_to_read();
-        let rxempty = _receive_spi.rx_empty();
-        debug!("Is RX empty (before read)? {rxempty}");
-        let val = _receive_spi.read_word().unwrap() >> 24;
-        debug!("We have received this value: {val}");
-        let rxempty = _receive_spi.rx_empty();
-        debug!("Is RX empty (after read)? {rxempty}");
-        _receive_spi.write_word(val);
-    }
-
-
-    let mut last: u32 = 0u32;
-    for i in 0..5000 {
-        let val = _receive_spi.read_word().unwrap() >> 24;
-        if val != last {
-            let rxempty = _receive_spi.rx_empty();
-            debug!("Is RX empty? {rxempty}");
-            debug!("We have received this value: {val} on iter {i}");
-            _receive_spi.write_word(val);
-            last = val;
-        }
-
-        // slow so should be enough for interrutps
-        // debug!("");
-        
-    }
-
-    for _ in 0..10 {
-        pin6.toggle();
-        // debug!("Toggled!!\n");
-    }
-
-    // let val = _receive_spi.read_word().unwrap() >> 24;
-    // debug!("We have received this value: {val}");
 
     // let mut pio: Pio = Pio::new_pio0();
 

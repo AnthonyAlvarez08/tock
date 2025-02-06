@@ -8,7 +8,7 @@
 //! Programmable Input Output (PIO) hardware test file.
 use crate::clocks::{self};
 use crate::gpio::{GpioFunction, RPGpio, RPGpioPin};
-use crate::pio::{PIONumber, Pio, SMNumber, StateMachineConfiguration, PioTxClient, PioRxClient};
+use crate::pio::{PIONumber, Pio, PioRxClient, PioTxClient, SMNumber, StateMachineConfiguration};
 use kernel::debug;
 use kernel::hil::spi::cs::ChipSelectPolar;
 use kernel::hil::spi::SpiMaster;
@@ -23,9 +23,11 @@ use kernel::utilities::registers::{register_bitfields, register_structs, ReadOnl
 use kernel::utilities::StaticRef;
 use kernel::{hil, ErrorCode};
 
+// TODO: refactor this so I can use just a PIO reference rather than a cell
+
 pub struct PioSpi<'a> {
     clocks: &'a clocks::Clocks,
-    pio: TakeCell<'a, Pio>,
+    pio: &'a Pio, //TakeCell<'a, Pio>,
     side_set_pin: u32,
     out_pin: u32,
     in_pin: u32,
@@ -33,9 +35,7 @@ pub struct PioSpi<'a> {
     pio_number: PIONumber,
 }
 
-
-static queueClient : QueueClient<'static> = QueueClient::<'_> { wahoo: &0};
-
+static QUEUE_CLIENT: QueueClient<'static> = QueueClient::<'_> { wahoo: &0 };
 
 //* experimenting with having a singleton (or rather a doubleton) PioSpi Class
 //* as there should only be two of them anyway
@@ -65,10 +65,9 @@ static queueClient : QueueClient<'static> = QueueClient::<'_> { wahoo: &0};
 //     PIONumber::PIO1,
 // );
 
-
 impl<'a> PioSpi<'a> {
     pub fn new(
-        pio: &'a mut Pio,
+        pio: &'a Pio,
         clocks: &'a clocks::Clocks,
         side_set_pin: u32,
         in_pin: u32,
@@ -78,7 +77,7 @@ impl<'a> PioSpi<'a> {
     ) -> Self {
         Self {
             clocks,
-            pio: TakeCell::new(pio),
+            pio: pio, //TakeCell::new(pio),
             side_set_pin: side_set_pin,
             in_pin: in_pin,
             out_pin: out_pin,
@@ -88,67 +87,74 @@ impl<'a> PioSpi<'a> {
     }
 
     pub fn block_until_empty(&self) {
-        self.pio.map(|pio| {
-            while !pio.sm(self.sm_number).rx_empty() || !pio.sm(self.sm_number).tx_empty() {
-                self.clear_fifos();
-            }
-        });
+        while !self.pio.sm(self.sm_number).rx_empty() || !self.pio.sm(self.sm_number).tx_empty() {
+            self.clear_fifos();
+        }
     }
 
     pub fn block_until_ready_to_read(&self) {
-        self.pio.map(|pio| {
-            while pio.sm(self.sm_number).rx_empty() {
-            
-            }
-        });
-        
+        while self.pio.sm(self.sm_number).rx_empty() {}
     }
 
     pub fn block_until_ready_to_write(&self) {
-        self.pio.map(|pio| {
-            while pio.sm(self.sm_number).tx_full() {
-            
-            }
-        });
-        
+        while self.pio.sm(self.sm_number).tx_full() {}
+    }
+
+    pub fn block_until_all_writen(&self) {
+        while !self.pio.sm(self.sm_number).tx_empty() {}
     }
 
     pub fn rx_empty(&self) -> bool {
-        let mut empty : bool = true;
-        self.pio.map(|pio| {
-            if !pio.sm(self.sm_number).rx_empty() {
-                empty = false;
-            }
-        });
+        let mut empty: bool = true;
+        if !self.pio.sm(self.sm_number).rx_empty() {
+            empty = false;
+        }
 
         empty
-        
     }
 
     pub fn read_word(&self) -> Result<u32, ErrorCode> {
         let mut data: u32 = 0;
-        self.pio.map(|pio| {
-            // Read data from the RX FIFO
-            pio.handle_interrupt();
-            data = pio.sm(self.sm_number).just_pull().unwrap();
-        });
+        // Read data from the RX FIFO
+        self.pio.handle_interrupt();
+
+        // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
+        // in this example they write 0 out before they're reading
+        if !self.pio.sm(self.sm_number).tx_full() {
+            self.pio.sm(self.sm_number).push_blocking(0);
+        }
+
+        data = self.pio.sm(self.sm_number).just_pull().unwrap();
+
+        Ok(data)
+    }
+
+    pub fn read_word_blocking(&self) -> Result<u32, ErrorCode> {
+        let mut data: u32 = 0;
+        // Read data from the RX FIFO
+        self.pio.handle_interrupt();
+        data = self.pio.sm(self.sm_number).pull_blocking().unwrap();
 
         Ok(data)
     }
 
     pub fn write_word(&self, val: u32) -> Result<(), ErrorCode> {
-        self.pio.map(|pio| {
-            pio.handle_interrupt();
-            pio.sm(self.sm_number).push_blocking(val);
-        });
+        self.pio.handle_interrupt();
+
+        // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
+        // in this example they reading and dumping after they're writing
+        self.pio.sm(self.sm_number).push_blocking(val);
+
+        let _ = self.pio.sm(self.sm_number).just_pull().unwrap();
 
         Ok(())
     }
 
     pub fn clear_fifos(&self) {
-        self.pio.map(|pio| {
-            pio.sm(self.sm_number).clear_fifos();
-        });
+        for _ in 0..4 {
+            let __ = self.pio.sm(self.sm_number).just_pull();
+        }
+        self.pio.sm(self.sm_number).clear_fifos();
     }
 }
 
@@ -197,8 +203,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
                 */
 
         let asm: [u16; 2] = [
-            // these were 4 digit hex numbers in the zephyr one
-            // maybe it will work fine if I split them?
             0x6101, /*  0: out    pins, 1         side 0 [1] */
             0x5101, /*  1: in     pins, 1         side 1 [1] */
         ];
@@ -233,62 +237,52 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         pub div_int: u32,
         pub div_frac: u32,*/
 
-        self.pio.map(|pio| {
-            pio.init();
-            pio.add_program16(None::<usize>, &asm);
+        self.pio.init();
+        self.pio.add_program16(None::<usize>, &asm);
+        // TODO: add custom configurations if necessary
+        let mut custom_config = StateMachineConfiguration::default();
+        // the program requires auto push and pull to be on
+        // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/spi_loopback.c
+        //
+        //  float clkdiv = 31.25f;  // 1 MHz @ 125 clk_sys
+        // custom_config.div_int = 31;
+        // custom_config.div_frac = 64; // is 64/256 = 1/4
 
-            // TODO: add custom configurations if necessary
-            let mut custom_config = StateMachineConfiguration::default();
+        // should be able to work on bytes according to the PIO manual
+        // custom_config.in_push_threshold = 8;
+        // custom_config.out_pull_threshold = 8;
 
-            // the program requires auto push and pull to be on
+        custom_config.side_set_base = self.side_set_pin;
+        custom_config.in_pins_base = self.in_pin;
+        custom_config.out_pins_base = self.out_pin;
+        custom_config.side_set_bit_count = 1;
+        custom_config.wrap = 1;
+        custom_config.in_autopush = true;
+        custom_config.out_autopull = true;
+        self.pio.spi_program_init(
+            self.sm_number,
+            self.side_set_pin,
+            self.in_pin,
+            self.out_pin,
+            &custom_config,
+        );
 
-            // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/spi_loopback.c
-            //
-            //  float clkdiv = 31.25f;  // 1 MHz @ 125 clk_sys
-            // custom_config.div_int = 31;
-            // custom_config.div_frac = 64; // is 64/256 = 1/4
+        // subscribe to interrupts
+        debug!("Now enabling interrupts\n");
 
-            // should be able to work on bytes according to the PIO manual
-            custom_config.in_push_threshold = 8;
-            custom_config.out_pull_threshold = 8;
+        // let irq_index = if self.pio.pio_number == PIONumber::PIO0 {
+        //     0
+        // } else {
+        //     1
+        // };
 
+        // for i in self.pio.sm(self.sm_number).get_interrupt_sources() {
+        //     self.pio.set_irq_source(0, i, true);
+        // }
 
-            custom_config.side_set_base = self.side_set_pin;
-            custom_config.in_pins_base = self.in_pin;
-            custom_config.out_pins_base = self.out_pin;
-            custom_config.side_set_bit_count = 1;
-
-
-            custom_config.wrap = 1;
-
-
-            custom_config.in_autopush = true;
-            custom_config.out_autopull = true;
-
-            pio.spi_program_init(
-                self.sm_number,
-                self.side_set_pin,
-                self.in_pin,
-                self.out_pin,
-                &custom_config,
-            );
-
-            // subscribe to interrumts
-            // for i in pio.sm(self.sm_number).get_interrupt_sources() {
-            //     pio.set_irq_source(0, i, true);
-            // }
-            // for i in pio.sm(self.sm_number).get_interrupt_sources() {
-            //     pio.set_irq_source(1, i, true);
-            // }
-
-
-
-            // subscribe to the interrupts I guess?
-            pio.sm(self.sm_number).set_tx_client(&queueClient);
-            pio.sm(self.sm_number).set_rx_client(&queueClient);
-
-            
-        });
+        // subscribe to the interrupts I guess?
+        self.pio.sm(self.sm_number).set_tx_client(&QUEUE_CLIENT);
+        self.pio.sm(self.sm_number).set_rx_client(&QUEUE_CLIENT);
 
         Ok(())
     }
@@ -315,21 +309,17 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
-        self.pio.map(|pio| {
-            pio.handle_interrupt();
-            pio.sm(self.sm_number).push_blocking(val as u32);
-        });
+        self.pio.handle_interrupt();
+        self.pio.sm(self.sm_number).push_blocking(val as u32);
 
         Ok(())
     }
 
     fn read_byte(&self) -> Result<u8, ErrorCode> {
         let mut data: u32 = 0;
-        self.pio.map(|pio| {
-            // Read data from the RX FIFO
-            pio.handle_interrupt();
-            data = pio.sm(self.sm_number).just_pull().unwrap();
-        });
+        // Read data from the RX FIFO
+        self.pio.handle_interrupt();
+        data = self.pio.sm(self.sm_number).just_pull().unwrap();
 
         Ok(data as u8)
     }
@@ -393,18 +383,16 @@ impl<'a> PioTxClient for PioSpi<'a> {
 }
 
 impl<'a> PioRxClient for PioSpi<'a> {
-    
     fn on_data_received(&self, data: u32) {
         debug!("Received data {data}");
     }
 }
 
-
 struct QueueClient<'a> {
-    wahoo: &'a i32
+    wahoo: &'a i32,
 }
 
-impl <'a> QueueClient<'a> {
+impl<'a> QueueClient<'a> {
     pub fn new() -> Self {
         Self { wahoo: &0 }
     }
@@ -417,7 +405,6 @@ impl<'a> PioTxClient for QueueClient<'a> {
 }
 
 impl<'a> PioRxClient for QueueClient<'a> {
-
     fn on_data_received(&self, data: u32) {
         debug!("Received data {data}");
     }

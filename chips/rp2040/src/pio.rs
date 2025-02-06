@@ -1181,26 +1181,27 @@ impl StateMachine {
         Ok(self.registers.rxf[self.sm_number as usize].read(RXFx::RXF))
     }
 
-
-    pub fn get_interrupt_sources(&self) -> [InterruptSources; 2]
-    {
+    pub fn get_interrupt_sources(&self) -> [InterruptSources; 2] {
         let res = match self.sm_number {
-            SMNumber::SM0 => {
-                [InterruptSources::Sm0TXNotFull, InterruptSources::Sm0RXNotEmpty]
-            }
-            SMNumber::SM1 => {
-                [InterruptSources::Sm1TXNotFull, InterruptSources::Sm1RXNotEmpty]
-            }
-            SMNumber::SM2 => {
-                [InterruptSources::Sm2TXNotFull, InterruptSources::Sm2RXNotEmpty]
-            }
-            SMNumber::SM3 => {
-                [InterruptSources::Sm3TXNotFull, InterruptSources::Sm3RXNotEmpty]
-            }
+            SMNumber::SM0 => [
+                InterruptSources::Sm0TXNotFull,
+                InterruptSources::Sm0RXNotEmpty,
+            ],
+            SMNumber::SM1 => [
+                InterruptSources::Sm1TXNotFull,
+                InterruptSources::Sm1RXNotEmpty,
+            ],
+            SMNumber::SM2 => [
+                InterruptSources::Sm2TXNotFull,
+                InterruptSources::Sm2RXNotEmpty,
+            ],
+            SMNumber::SM3 => [
+                InterruptSources::Sm3TXNotFull,
+                InterruptSources::Sm3RXNotEmpty,
+            ],
         };
 
         res
-        
     }
 
     /// Handle a TX interrupt - notify that buffer space is available.
@@ -1783,7 +1784,7 @@ mod examples {
         }
 
         pub fn spi_program_init(
-            &mut self,
+            &self,
             sm_number: SMNumber,
             side_set_pin: u32,
             in_pin: u32,
