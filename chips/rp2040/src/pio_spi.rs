@@ -322,8 +322,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             Option<SubSliceMut<'static, u8>>,
         ),
     > {
-        debug!("Not implemented yet because subslices are way too complicated");
-
         let mut reading: bool = false;
 
         // let writer = SubSlice::new(write_buffer.borrow().into());
@@ -340,6 +338,10 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         let mut writedex: usize = 0;
 
         while writedex < write_buffer.len() {
+            debug!(
+                "[PIOSPI] idx {writedex} of writebuf: {}",
+                write_buffer[writedex]
+            );
             for _ in 0..10 {
                 match self.wiggle_pin {
                     Some(pin) => {
@@ -351,7 +353,9 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
                 }
             }
 
+            debug!("[PIOSPI] called read write byte");
             let res = self.read_write_byte(write_buffer[writedex]);
+            debug!("[PIOSPI] passed read write byte");
 
             for _ in 0..10 {
                 match self.wiggle_pin {
@@ -365,6 +369,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             }
 
             if reading {
+                debug!("[PIOSPI] About to commit a read");
                 match res {
                     Ok(val) => {
                         // do stuff
@@ -375,6 +380,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
                         return Err((error, write_buffer, Some(reader)));
                     }
                 }
+                debug!("[PIOSPI] Passed reading");
             }
 
             for _ in 0..10 {
@@ -443,17 +449,24 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn read_write_byte(&self, val: u8) -> Result<u8, ErrorCode> {
-        let res = self.write_byte(val);
-        let res2 = self.read_byte();
+        let mut data: u32 = 0;
+        // Read data from the RX FIFO
+        self.pio.handle_interrupt();
 
-        match res2 {
-            Ok(resval) => {
-                return Ok(resval);
-            }
-            Err(errcode) => {
-                return Err(errcode);
-            }
+        // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
+        // in this example they write 0 out before they're reading
+        if !self.pio.sm(self.sm_number).tx_full() {
+            let _ = self.pio.sm(self.sm_number).push_blocking(val as u32);
         }
+
+        data = match self.pio.sm(self.sm_number).pull_blocking() {
+            Ok(val) => val,
+            Err(error) => {
+                return Err(error);
+            }
+        };
+
+        Ok(data as u8)
     }
 
     fn specify_chip_select(&self, cs: Self::ChipSelect) -> Result<(), ErrorCode> {

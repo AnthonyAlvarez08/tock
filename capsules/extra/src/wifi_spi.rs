@@ -13,7 +13,7 @@ use kernel::hil::spi::{SpiMaster, SpiMasterClient, SpiMasterDevice};
 pub struct WiFiSpi<'a, Spi: SpiMaster<'a>> {
     spi_master: &'a Spi,
     state: Cell<State>,
-    in_buffer: TakeCell<'static, [u8]>,
+    in_buffer: Option<TakeCell<'static, [u8]>>,
     out_buffer: TakeCell<'static, [u8]>,
 }
 
@@ -24,19 +24,43 @@ static mut ARR: [u8; 9] = [
 impl<'a, Spi: SpiMaster<'a>> WiFiSpi<'a, Spi> {
     pub fn new(
         spi_master: &'a Spi,
-        in_buffer: &'static mut [u8],
+        in_buffer: Option<&'static mut [u8]>,
         out_buffer: &'static mut [u8],
     ) -> Self {
         Self {
-            in_buffer: TakeCell::new(in_buffer),
+            in_buffer: match in_buffer {
+                Some(val) => Some(TakeCell::new(val)),
+                _ => None,
+            },
             out_buffer: TakeCell::new(out_buffer),
             spi_master: spi_master,
             state: Cell::new(State::Suspend),
         }
     }
 
+    pub fn print_read(&self) {
+        debug!("[Capsule] try to print read buffer");
+        match &self.in_buffer {
+            Some(buf) => {
+                if buf.is_some() {
+                    debug!("[Capsule] read buffer exists");
+                } else {
+                    debug!("[Capsule] read buffer does not exist");
+                }
+                buf.map(|arr| {
+                    for i in arr {
+                        debug!("[Capsule Read] {i}");
+                    }
+                });
+            }
+            _ => {
+                debug!("[Capsule] read buffer does not exist");
+            }
+        }
+    }
+
     pub fn start(&self) -> Result<(), ErrorCode> {
-        debug!("writing word");
+        debug!("[Capsule] writing word");
 
         // self.out_buffer.put(Some(unsafe { ARR.as_mut_slice() }));
 
@@ -46,12 +70,30 @@ impl<'a, Spi: SpiMaster<'a>> WiFiSpi<'a, Spi> {
             Some(buf) => {
                 let out_buffer = SubSliceMut::new(buf);
 
-                let in_buffer: SubSliceMut<'static, u8> = SubSliceMut::new(&mut []);
-
                 // _pio_spi.block_until_ready_to_write();
-                let res = self
-                    .spi_master
-                    .read_write_bytes(out_buffer, Some(in_buffer));
+                debug!("[Capsule] Calling read write bytes");
+                if self.in_buffer.is_some() {
+                    // why is it so complicated to just pass a buffer arround
+                    debug!("[Capsule] Attempting to both read and write");
+
+                    // ! probably moves the buffer, meaning can't recover it
+                    let temp = self.in_buffer.as_ref().unwrap().take().unwrap();
+
+                    let mut in_buffer: SubSliceMut<'static, u8> = SubSliceMut::new(temp);
+
+                    // ! so value of in buffer moved inside here because that's how the API works
+                    // ! how does one retrieve what was read then?
+                    let _ = self
+                        .spi_master
+                        .read_write_bytes(out_buffer, Some(in_buffer));
+
+                    debug!("[Capsule] did both reading and writing");
+                } else {
+                    debug!("[Capsule] Attempting to just read");
+                    let _ = self.spi_master.read_write_bytes(out_buffer, None);
+                    debug!("[Capsule] Finished reading");
+                    //Some(in_buffer));
+                }
             }
             _ => {}
         }

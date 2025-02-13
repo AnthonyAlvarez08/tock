@@ -12,6 +12,7 @@
 #![cfg_attr(not(doc), no_main)]
 #![deny(missing_docs)]
 
+use core::borrow::BorrowMut;
 use core::ptr::{addr_of, addr_of_mut};
 
 use capsules_core::i2c_master::I2CMasterDriver;
@@ -609,7 +610,7 @@ pub unsafe fn start() -> (
     _pio_spi.clear_fifos();
     _receive_spi.block_until_empty();
     _pio_spi.block_until_empty();
-    debug!("empty rx on receive spi");
+    // debug!("empty rx on receive spi");
 
     // put like 4 bytes in a queue, and read
     // seems to have space for 5 items only
@@ -646,7 +647,7 @@ pub unsafe fn start() -> (
     //     }
     // }
 
-    debug!("Trying to write a sentence");
+    // debug!("Trying to write a sentence");
 
     // put like 4 bytes in a queue, and read
     // seems to have space for 5 items only
@@ -669,7 +670,7 @@ pub unsafe fn start() -> (
     //     _receive_spi.write_word(val);
     // }
 
-    debug!("Trying to write alphabet");
+    // debug!("Trying to write alphabet");
 
     // put like 4 bytes in a queue, and read
     // seems to have space for 5 items only
@@ -692,7 +693,7 @@ pub unsafe fn start() -> (
     //     _receive_spi.write_word(val);
     // }
 
-    debug!("Trying to write alphabet");
+    // debug!("Trying to write alphabet");
 
     // put like 4 bytes in a queue, and read
     // seems to have space for 5 items only
@@ -712,19 +713,46 @@ pub unsafe fn start() -> (
     }
 
     static mut out_arr: [u8; 10] = [
-        0xFFu8, 0x41u8, 0x42u8, 0x43u8, 0x44u8, 0x45u8, 0x46u8, 0x47u8, 0x48u8, 0xFFu8,
+        0xFFu8, 0x41u8, 0xA7u8, 0xD3u8, 0xB4u8, 0x75u8, 0x2Fu8, 0xC9u8, 0xD8u8, 0xFFu8,
     ];
 
     static mut in_arr: [u8; 10] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let mut in_buf: TakeCell<'_, [u8]> = TakeCell::empty();
+    let mut in_buf: TakeCell<'static, [u8]> = TakeCell::empty();
     in_buf.put(Some(in_arr.as_mut_slice()));
 
-    let mut out_buf: TakeCell<'_, [u8]> = TakeCell::empty();
+    let mut out_buf: TakeCell<'static, [u8]> = TakeCell::empty();
     out_buf.put(Some(out_arr.as_mut_slice()));
-    let wifi_spi = WiFiSpi::new(_pio_spi, in_buf.take().unwrap(), out_buf.take().unwrap());
+    // let wifi_spi = WiFiSpi::new(_pio_spi, None, out_buf.take().unwrap_or_default());
 
-    wifi_spi.start();
+    let wifi_spi = WiFiSpi::new(_pio_spi, None, out_buf.take().unwrap_or_default());
+
+    static mut out_arr2: [u8; 10] = [
+        0xFFu8, 0x41u8, 0xA7u8, 0xD3u8, 0xB4u8, 0x75u8, 0x2Fu8, 0xC9u8, 0xD8u8, 0xFFu8,
+    ];
+
+    for _ in 0..20 {
+        pin6.toggle(); // wahoo
+    }
+
+    let mut out_buf2: TakeCell<'static, [u8]> = TakeCell::empty();
+    out_buf.put(Some(out_arr2.as_mut_slice()));
+
+    let reader_spi = WiFiSpi::new(
+        _receive_spi,
+        in_buf.take(),
+        out_buf2.take().unwrap_or_default(),
+    );
+
+    for _ in 0..30 {
+        pin6.toggle(); // wahoo
+    }
+
+    let _ = wifi_spi.start();
+    wifi_spi.print_read();
+
+    let _ = reader_spi.start();
+    reader_spi.print_read();
 
     let raspberry_pi_pico = RaspberryPiPico {
         ipc: kernel::ipc::IPC::new(
