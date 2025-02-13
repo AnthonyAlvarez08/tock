@@ -111,3 +111,4 @@ pub mod tsl2561;
 pub mod usb;
 pub mod usb_hid_driver;
 pub mod virtual_kv;
+pub mod wifi_spi;
