@@ -6,10 +6,13 @@
 //         Anthony Alvarez <anthonyalvarez2026@u.northwestern.edu>
 
 //! Programmable Input Output (PIO) hardware test file.
+use core::borrow::Borrow;
+
 use crate::clocks::{self};
 use crate::gpio::{GpioFunction, RPGpio, RPGpioPin};
 use crate::pio::{PIONumber, Pio, PioRxClient, PioTxClient, SMNumber, StateMachineConfiguration};
 use kernel::debug;
+use kernel::hil::gpio::Output;
 use kernel::hil::spi::cs::ChipSelectPolar;
 use kernel::hil::spi::SpiMaster;
 use kernel::hil::spi::SpiMasterClient;
@@ -17,7 +20,7 @@ use kernel::hil::spi::{ClockPhase, ClockPolarity};
 use kernel::utilities::cells::MapCell;
 use kernel::utilities::cells::OptionalCell;
 use kernel::utilities::cells::TakeCell;
-use kernel::utilities::leasable_buffer::SubSliceMut;
+use kernel::utilities::leasable_buffer::{SubSlice, SubSliceMut};
 use kernel::utilities::registers::interfaces::{ReadWriteable, Readable, Writeable};
 use kernel::utilities::registers::{register_bitfields, register_structs, ReadOnly, ReadWrite};
 use kernel::utilities::StaticRef;
@@ -33,6 +36,7 @@ pub struct PioSpi<'a> {
     in_pin: u32,
     sm_number: SMNumber,
     pio_number: PIONumber,
+    wiggle_pin: Option<&'a RPGpioPin<'a>>,
 }
 
 static QUEUE_CLIENT: QueueClient<'static> = QueueClient::<'_> { wahoo: &0 };
@@ -83,7 +87,12 @@ impl<'a> PioSpi<'a> {
             out_pin: out_pin,
             sm_number: sm_number,
             pio_number: pio_number,
+            wiggle_pin: None::<&'a RPGpioPin<'a>>,
         }
+    }
+
+    pub fn set_wiggle_pin(&mut self, pin: &'a RPGpioPin<'a>) {
+        self.wiggle_pin.insert(pin);
     }
 
     pub fn block_until_empty(&self) {
@@ -112,7 +121,35 @@ impl<'a> PioSpi<'a> {
             self.pio.sm(self.sm_number).push_blocking(0);
         }
 
-        data = self.pio.sm(self.sm_number).pull_blocking().unwrap();
+        for _ in 0..10 {
+            match self.wiggle_pin {
+                Some(pin) => {
+                    pin.toggle();
+                }
+                _ => {
+                    debug!("no wiggle pin");
+                }
+            }
+        }
+
+        data = match self.pio.sm(self.sm_number).pull_blocking() {
+            Ok(res) => res,
+            Err(err) => {
+                debug!("Error code : STATE MACHINE BUSY");
+                return Err(err);
+            }
+        };
+        // seeing the second pin wiggle means it returned something valid
+        for _ in 0..20 {
+            match self.wiggle_pin {
+                Some(pin) => {
+                    pin.toggle();
+                }
+                _ => {
+                    debug!("no wiggle pin");
+                }
+            }
+        }
 
         Ok(data)
     }
@@ -285,12 +322,101 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             Option<SubSliceMut<'static, u8>>,
         ),
     > {
+        debug!("Not implemented yet because subslices are way too complicated");
+
+        let mut reading: bool = false;
+
+        // let writer = SubSlice::new(write_buffer.borrow().into());
+
+        let mut reader = match read_buffer {
+            Some(buf) => {
+                reading = true;
+                buf
+            }
+            _ => SubSliceMut::new(&mut []),
+        };
+
+        let mut readdex: usize = 0;
+        let mut writedex: usize = 0;
+
+        while writedex < write_buffer.len() {
+            for _ in 0..10 {
+                match self.wiggle_pin {
+                    Some(pin) => {
+                        pin.toggle();
+                    }
+                    _ => {
+                        debug!("no wiggle pin");
+                    }
+                }
+            }
+
+            let res = self.read_write_byte(write_buffer[writedex]);
+
+            for _ in 0..10 {
+                match self.wiggle_pin {
+                    Some(pin) => {
+                        pin.toggle();
+                    }
+                    _ => {
+                        debug!("no wiggle pin");
+                    }
+                }
+            }
+
+            if reading {
+                match res {
+                    Ok(val) => {
+                        // do stuff
+                        reader[readdex] = val;
+                        readdex += 1;
+                    }
+                    Err(error) => {
+                        return Err((error, write_buffer, Some(reader)));
+                    }
+                }
+            }
+
+            for _ in 0..10 {
+                match self.wiggle_pin {
+                    Some(pin) => {
+                        pin.toggle();
+                    }
+                    _ => {
+                        debug!("no wiggle pin");
+                    }
+                }
+            }
+            writedex += 1;
+        }
+
+        for _ in 0..10 {
+            match self.wiggle_pin {
+                Some(pin) => {
+                    pin.toggle();
+                }
+                _ => {
+                    debug!("no wiggle pin");
+                }
+            }
+        }
+
         Ok(())
     }
 
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
         self.pio.handle_interrupt();
+
+        // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
+        // in this example they reading and dumping after they're writing
         self.pio.sm(self.sm_number).push_blocking(val as u32);
+
+        if !self.pio.sm(self.sm_number).rx_empty() {
+            match self.pio.sm(self.sm_number).pull_blocking() {
+                Ok(val) => {}
+                Err(err) => {}
+            }
+        }
 
         Ok(())
     }
@@ -299,13 +425,35 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         let mut data: u32 = 0;
         // Read data from the RX FIFO
         self.pio.handle_interrupt();
-        data = self.pio.sm(self.sm_number).just_pull().unwrap();
+
+        // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
+        // in this example they write 0 out before they're reading
+        if !self.pio.sm(self.sm_number).tx_full() {
+            self.pio.sm(self.sm_number).push_blocking(0);
+        }
+
+        data = match self.pio.sm(self.sm_number).pull_blocking() {
+            Ok(val) => val,
+            Err(error) => {
+                return Err(error);
+            }
+        };
 
         Ok(data as u8)
     }
 
     fn read_write_byte(&self, val: u8) -> Result<u8, ErrorCode> {
-        Ok(1 as u8)
+        let res = self.write_byte(val);
+        let res2 = self.read_byte();
+
+        match res2 {
+            Ok(resval) => {
+                return Ok(resval);
+            }
+            Err(errcode) => {
+                return Err(errcode);
+            }
+        }
     }
 
     fn specify_chip_select(&self, cs: Self::ChipSelect) -> Result<(), ErrorCode> {
@@ -380,12 +528,12 @@ impl<'a> QueueClient<'a> {
 
 impl<'a> PioTxClient for QueueClient<'a> {
     fn on_buffer_space_available(&self) {
-        debug!("buffer space available");
+        debug!("INSIDE INTERRUPT HANDLER buffer space available\n");
     }
 }
 
 impl<'a> PioRxClient for QueueClient<'a> {
     fn on_data_received(&self, data: u32) {
-        debug!("Received data {data}");
+        debug!("INSIDE INTERRUPT HANDLER Received data {data}\n");
     }
 }

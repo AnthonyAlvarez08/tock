@@ -185,6 +185,10 @@ impl InterruptService for Rp2040DefaultPeripherals<'_> {
                 self.pio0.handle_interrupt();
                 true
             }
+            interrupts::PIO1_IRQ_0 => {
+                self.pio1.handle_interrupt();
+                true
+            }
             interrupts::TIMER_IRQ_0 => {
                 self.timer.handle_interrupt();
                 true

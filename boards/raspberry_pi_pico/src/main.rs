@@ -16,6 +16,7 @@ use core::ptr::{addr_of, addr_of_mut};
 
 use capsules_core::i2c_master::I2CMasterDriver;
 use capsules_core::virtualizers::virtual_alarm::VirtualMuxAlarm;
+use capsules_extra::wifi_spi::WiFiSpi;
 use components::date_time_component_static;
 use components::gpio::GpioComponent;
 use components::led::LedsComponent;
@@ -29,6 +30,7 @@ use kernel::hil::usb::Client;
 use kernel::platform::{KernelResources, SyscallDriverLookup};
 use kernel::scheduler::round_robin::RoundRobinSched;
 use kernel::syscall::SyscallDriver;
+use kernel::utilities::cells::TakeCell;
 use kernel::{capabilities, create_capability, static_init, Kernel};
 
 use kernel::hil::gpio::Output;
@@ -554,11 +556,18 @@ pub unsafe fn start() -> (
 
     let pin6 = peripherals.pins.get_pin(RPGpio::GPIO6);
     pin6.make_output();
+    let pin7 = peripherals.pins.get_pin(RPGpio::GPIO7);
+    pin7.make_output();
+    let pin8 = peripherals.pins.get_pin(RPGpio::GPIO8);
+    pin8.make_output();
+    let pin9 = peripherals.pins.get_pin(RPGpio::GPIO9);
+    pin9.make_output();
 
     for _ in 0..10 {
         pin6.toggle();
-
-        // debug!("Toggled!!\n");
+        pin7.toggle();
+        pin8.toggle();
+        pin9.toggle();
     }
 
     // let pio = static_init!(Pio, Pio::new_pio1());
@@ -589,6 +598,9 @@ pub unsafe fn start() -> (
         )
     );
 
+    _pio_spi.set_wiggle_pin(pin8);
+    _receive_spi.set_wiggle_pin(pin6);
+
     // // debug!("Attempting to initialize PIO");
     let _ = _pio_spi.init();
     let _ = _receive_spi.init();
@@ -602,19 +614,37 @@ pub unsafe fn start() -> (
     // put like 4 bytes in a queue, and read
     // seems to have space for 5 items only
     // should be read as [167, 212, 81, 177, 114, 246, 197, 113, 227]
-    for i in [
-        0xA7u8, 0xD4u8, 0x51u8, 0xB1u8, 0x72u8, 0xF6u8, 0xC5u8, 0x71u8, 0xE3u8,
-    ] {
-        debug!("writing word");
-        // _pio_spi.block_until_ready_to_write();
-        _pio_spi.write_word(i as u32);
-        // debug!("finished writing word");
+    // for i in [
+    //     0xA7u8, 0xD4u8, 0x51u8, 0xB1u8, 0x72u8, 0xF6u8, 0xC5u8, 0x71u8, 0xE3u8,
+    // ] {
+    //     debug!("writing word");
+    //     for _ in 0..10 {
+    //         pin7.toggle();
+    //     }
+    //     // _pio_spi.block_until_ready_to_write();
+    //     _pio_spi.write_word(i as u32);
+    //     // debug!("finished writing word");
 
-        let val = _receive_spi.read_word().unwrap();
-        debug!("recv this value: {val}");
+    //     for _ in 0..10 {
+    //         pin8.toggle();
+    //     }
 
-        _receive_spi.write_word(val);
-    }
+    //     let val = match _receive_spi.read_word() {
+    //         Ok(data) => data,
+    //         Err(err) => 0,
+    //     };
+    //     debug!("recv this value: {val}");
+
+    //     for _ in 0..10 {
+    //         pin9.toggle();
+    //     }
+
+    //     _receive_spi.write_word(val);
+
+    //     for _ in 0..10 {
+    //         pin6.toggle();
+    //     }
+    // }
 
     debug!("Trying to write a sentence");
 
@@ -623,21 +653,21 @@ pub unsafe fn start() -> (
     // should be read as "Tock OS"
     // [0x54u8, 0x6fu8, 0x63u8, 0x6bu8, 0x20u8, 0x4fu8, 0x53u8]
     // 0..20
-    for i in ['T', 'o', 'c', 'k', ' ', 'O', 'S'] {
-        debug!("writing word");
-        // _pio_spi.block_until_ready_to_write();
-        _pio_spi.write_word(u32::from(i));
-        // debug!("finished writing word");
+    // for i in ['T', 'o', 'c', 'k', ' ', 'O', 'S'] {
+    //     debug!("writing word");
+    //     // _pio_spi.block_until_ready_to_write();
+    //     _pio_spi.write_word(u32::from(i));
+    //     // debug!("finished writing word");
 
-        let val = _receive_spi.read_word().unwrap();
-        let repr = match char::from_u32(val) {
-            Some(x) => x,
-            _ => '\t',
-        };
-        debug!("recv this value: {val}/{repr}");
+    //     let val = _receive_spi.read_word().unwrap();
+    //     let repr = match char::from_u32(val) {
+    //         Some(x) => x,
+    //         _ => '\t',
+    //     };
+    //     debug!("recv this value: {val}/{repr}");
 
-        _receive_spi.write_word(val);
-    }
+    //     _receive_spi.write_word(val);
+    // }
 
     debug!("Trying to write alphabet");
 
@@ -646,40 +676,55 @@ pub unsafe fn start() -> (
     // should be read as "ABCDE"
     //
     // 0..20
-    for i in ['A', 'B', 'C', 'D', 'E'] {
-        debug!("writing word");
+    // for i in ['A', 'B', 'C', 'D', 'E'] {
+    //     debug!("writing word");
 
-        _pio_spi.write_word(u32::from(i));
-        // debug!("finished writing word");
+    //     _pio_spi.write_word(u32::from(i));
+    //     // debug!("finished writing word");
 
-        let val = _receive_spi.read_word().unwrap();
-        let repr = match char::from_u32(val) {
-            Some(x) => x,
-            _ => '\t',
-        };
-        debug!("recv this value: {val}/{repr}");
+    //     let val = _receive_spi.read_word().unwrap();
+    //     let repr = match char::from_u32(val) {
+    //         Some(x) => x,
+    //         _ => '\t',
+    //     };
+    //     debug!("recv this value: {val}/{repr}");
 
-        _receive_spi.write_word(val);
-    }
+    //     _receive_spi.write_word(val);
+    // }
 
     debug!("Trying to write alphabet");
 
     // put like 4 bytes in a queue, and read
     // seems to have space for 5 items only
-    for i in [21, 78, 245, 90, 63] {
-        debug!("writing word");
+    // for i in [21, 78, 245, 90, 63] {
+    //     debug!("writing word");
 
-        _pio_spi.write_word(i as u32);
+    //     _pio_spi.write_word(i as u32);
 
-        let val = _receive_spi.read_word().unwrap();
-        debug!("recv this value: {val}");
+    //     let val = _receive_spi.read_word().unwrap();
+    //     debug!("recv this value: {val}");
 
-        _receive_spi.write_word(val);
-    }
+    //     _receive_spi.write_word(val);
+    // }
 
     for _ in 0..10 {
-        pin6.toggle();
+        pin6.toggle(); // wahoo
     }
+
+    static mut out_arr: [u8; 10] = [
+        0xFFu8, 0x41u8, 0x42u8, 0x43u8, 0x44u8, 0x45u8, 0x46u8, 0x47u8, 0x48u8, 0xFFu8,
+    ];
+
+    static mut in_arr: [u8; 10] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    let mut in_buf: TakeCell<'_, [u8]> = TakeCell::empty();
+    in_buf.put(Some(in_arr.as_mut_slice()));
+
+    let mut out_buf: TakeCell<'_, [u8]> = TakeCell::empty();
+    out_buf.put(Some(out_arr.as_mut_slice()));
+    let wifi_spi = WiFiSpi::new(_pio_spi, in_buf.take().unwrap(), out_buf.take().unwrap());
+
+    wifi_spi.start();
 
     let raspberry_pi_pico = RaspberryPiPico {
         ipc: kernel::ipc::IPC::new(
