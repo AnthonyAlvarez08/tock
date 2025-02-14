@@ -56,11 +56,14 @@ impl<'a, I: InterruptService> Rp2040<'a, I> {
     }
 }
 
+static mut num_handled: usize = 0;
+
 impl<I: InterruptService> Chip for Rp2040<'_, I> {
     type MPU = cortexm0p::mpu::MPU;
     type UserspaceKernelBoundary = cortexm0p::syscall::SysCall;
 
     fn service_pending_interrupts(&self) {
+        debug_flush_queue!();
         debug!("In service pending interrupts");
 
         unsafe {
@@ -69,7 +72,7 @@ impl<I: InterruptService> Chip for Rp2040<'_, I> {
                 Processor::Processor1 => self.processor1_interrupt_mask,
             };
             loop {
-                // debug_flush_queue!();
+                debug_flush_queue!();
                 if let Some(interrupt) = cortexm0p::nvic::next_pending_with_mask(mask) {
                     debug!("Saw interrutp {interrupt}");
 
@@ -84,7 +87,7 @@ impl<I: InterruptService> Chip for Rp2040<'_, I> {
                     let n = cortexm0p::nvic::Nvic::new(interrupt);
                     n.clear_pending();
                     n.enable();
-                    debug!("");
+                    // debug!("");
 
                     // manually break for debugging pruposes
                     break;
@@ -106,7 +109,11 @@ impl<I: InterruptService> Chip for Rp2040<'_, I> {
 
         unsafe {
             let res = cortexm0p::nvic::has_pending_with_mask(mask);
-            debug!("Inside checking for interrutps, has interrupts?: {res}");
+            debug!("checking for irq, has?: {res}");
+
+            // if num_handled > 50 {
+            //     return false;
+            // }
 
             res
         }
@@ -199,17 +206,19 @@ impl Rp2040DefaultPeripherals<'_> {
 
 impl InterruptService for Rp2040DefaultPeripherals<'_> {
     unsafe fn service_interrupt(&self, interrupt: u32) -> bool {
-        debug!("Inside service interrupt function, interrupt {interrupt}");
+        debug_flush_queue!();
+        debug!("Inside service interrupt for irq {interrupt}");
 
         match interrupt {
             interrupts::PIO0_IRQ_0 => {
+                debug!("Servicing irq for PIO0");
                 self.pio0.handle_interrupt();
-                debug!("Servicing interrupts for PIO0");
+
                 true
             }
             interrupts::PIO1_IRQ_0 => {
+                debug!("Servicing irq for PIO1");
                 self.pio1.handle_interrupt();
-                debug!("Servicing interrupts for PIO1");
                 true
             }
             interrupts::TIMER_IRQ_0 => {

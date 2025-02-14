@@ -1212,6 +1212,7 @@ impl StateMachine {
     fn handle_tx_interrupt(&self) {
         match self.tx_state.get() {
             StateMachineState::Waiting => {
+                debug!("TX interrupt handler active");
                 // TX queue has emptied, clear interrupt
                 let field = match self.sm_number {
                     SMNumber::SM0 => IRQ0_INTE::SM0_TXNFULL::CLEAR,
@@ -1225,7 +1226,9 @@ impl StateMachine {
                     client.on_buffer_space_available();
                 });
             }
-            StateMachineState::Ready => {}
+            StateMachineState::Ready => {
+                debug!("TX interrupt handler did nothing for some reason");
+            }
         }
     }
 
@@ -1233,6 +1236,7 @@ impl StateMachine {
     fn handle_rx_interrupt(&self) {
         match self.rx_state.get() {
             StateMachineState::Waiting => {
+                debug!("RX interrupt handler active");
                 // RX queue has data, clear interrupt
                 let field = match self.sm_number {
                     SMNumber::SM0 => IRQ0_INTE::SM0_RXNEMPTY::CLEAR,
@@ -1240,6 +1244,7 @@ impl StateMachine {
                     SMNumber::SM2 => IRQ0_INTE::SM2_RXNEMPTY::CLEAR,
                     SMNumber::SM3 => IRQ0_INTE::SM3_RXNEMPTY::CLEAR,
                 };
+
                 self.registers.irq0_inte.modify(field);
                 self.rx_state.set(StateMachineState::Ready);
                 self.rx_client.map(|client| {
@@ -1248,7 +1253,9 @@ impl StateMachine {
                     );
                 });
             }
-            StateMachineState::Ready => {}
+            StateMachineState::Ready => {
+                debug!("RX interrupt handler did nothing for some reason");
+            }
         }
     }
 }
@@ -1516,7 +1523,7 @@ impl Pio {
 
     /// Handle interrupts
     pub fn handle_interrupt(&self) {
-        debug!("Attempting to handle interrupt");
+        debug!("PIO handle interrupt");
         let ints = &self.registers.irq0_ints;
         for (sm, irq) in self.sms.iter().zip([
             IRQ0_INTS::SM0_TXNFULL,
@@ -1525,6 +1532,7 @@ impl Pio {
             IRQ0_INTS::SM3_TXNFULL,
         ]) {
             if ints.is_set(irq) {
+                debug!("To TX handle full");
                 sm.handle_tx_interrupt();
             }
         }
@@ -1535,6 +1543,7 @@ impl Pio {
             IRQ0_INTS::SM3_RXNEMPTY,
         ]) {
             if ints.is_set(irq) {
+                debug!("To RX handle empty");
                 sm.handle_rx_interrupt();
             }
         }
