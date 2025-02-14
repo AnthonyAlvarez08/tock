@@ -12,7 +12,7 @@ use crate::clocks::{self};
 use crate::gpio::{GpioFunction, RPGpio, RPGpioPin};
 use crate::pio::{PIONumber, Pio, PioRxClient, PioTxClient, SMNumber, StateMachineConfiguration};
 use kernel::debug;
-use kernel::hil::gpio::Output;
+use kernel::hil::gpio::{Configure, Output};
 use kernel::hil::spi::cs::ChipSelectPolar;
 use kernel::hil::spi::SpiMaster;
 use kernel::hil::spi::SpiMasterClient;
@@ -39,7 +39,7 @@ pub struct PioSpi<'a> {
     wiggle_pin: Option<&'a RPGpioPin<'a>>,
 }
 
-static QUEUE_CLIENT: QueueClient<'static> = QueueClient::<'_> { wahoo: &0 };
+const QUEUE_CLIENT: QueueClient<'static> = QueueClient::<'_> { wahoo: &0 };
 
 //* experimenting with having a singleton (or rather a doubleton) PioSpi Class
 //* as there should only be two of them anyway
@@ -113,7 +113,7 @@ impl<'a> PioSpi<'a> {
     pub fn read_word(&self) -> Result<u32, ErrorCode> {
         let mut data: u32 = 0;
         // Read data from the RX FIFO
-        self.pio.handle_interrupt();
+        // self.pio.handle_interrupt();
 
         // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
         // in this example they write 0 out before they're reading
@@ -121,7 +121,8 @@ impl<'a> PioSpi<'a> {
             self.pio.sm(self.sm_number).push_blocking(0);
         }
 
-        for _ in 0..10 {
+        for _ in 0..22 {
+            // should show 11 peaks
             match self.wiggle_pin {
                 Some(pin) => {
                     pin.toggle();
@@ -132,7 +133,7 @@ impl<'a> PioSpi<'a> {
             }
         }
 
-        data = match self.pio.sm(self.sm_number).pull_blocking() {
+        data = match self.pio.sm(self.sm_number).pull() {
             Ok(res) => res,
             Err(err) => {
                 debug!("Error code : STATE MACHINE BUSY");
@@ -140,7 +141,8 @@ impl<'a> PioSpi<'a> {
             }
         };
         // seeing the second pin wiggle means it returned something valid
-        for _ in 0..20 {
+        for _ in 0..14 {
+            // should show 7 peaks
             match self.wiggle_pin {
                 Some(pin) => {
                     pin.toggle();
@@ -541,12 +543,22 @@ impl<'a> QueueClient<'a> {
 
 impl<'a> PioTxClient for QueueClient<'a> {
     fn on_buffer_space_available(&self) {
+        let pin = RPGpioPin::new(RPGpio::GPIO9);
+        pin.make_output();
+        for i in 0..16 {
+            pin.toggle();
+        }
         debug!("INSIDE INTERRUPT HANDLER buffer space available\n");
     }
 }
 
 impl<'a> PioRxClient for QueueClient<'a> {
     fn on_data_received(&self, data: u32) {
+        let pin = RPGpioPin::new(RPGpio::GPIO9);
+        pin.make_output();
+        for i in 0..16 {
+            pin.toggle();
+        }
         debug!("INSIDE INTERRUPT HANDLER Received data {data}\n");
     }
 }

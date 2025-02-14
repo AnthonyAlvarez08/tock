@@ -5,6 +5,8 @@
 //! Chip trait setup.
 
 use core::fmt::Write;
+use kernel::debug;
+use kernel::debug_flush_queue;
 use kernel::platform::chip::Chip;
 use kernel::platform::chip::InterruptService;
 
@@ -59,22 +61,33 @@ impl<I: InterruptService> Chip for Rp2040<'_, I> {
     type UserspaceKernelBoundary = cortexm0p::syscall::SysCall;
 
     fn service_pending_interrupts(&self) {
+        debug!("In service pending interrupts");
+
         unsafe {
             let mask = match self.sio.get_processor() {
                 Processor::Processor0 => self.processor0_interrupt_mask,
                 Processor::Processor1 => self.processor1_interrupt_mask,
             };
             loop {
+                // debug_flush_queue!();
                 if let Some(interrupt) = cortexm0p::nvic::next_pending_with_mask(mask) {
+                    debug!("Saw interrutp {interrupt}");
+
                     // ignore SIO_IRQ_PROC1 as it is intended for processor 1
                     // not able to unset its pending status
                     // probably only processor 1 can unset the pending by reading the fifo
                     if !self.interrupt_service.service_interrupt(interrupt) {
-                        panic!("unhandled interrupt {}", interrupt);
+                        debug!("unhandled interrupt {}", interrupt);
+                        // panic!("unhandled interrupt {}", interrupt);
+                        break;
                     }
                     let n = cortexm0p::nvic::Nvic::new(interrupt);
                     n.clear_pending();
                     n.enable();
+                    debug!("");
+
+                    // manually break for debugging pruposes
+                    break;
                 } else {
                     break;
                 }
@@ -90,7 +103,13 @@ impl<I: InterruptService> Chip for Rp2040<'_, I> {
             Processor::Processor0 => self.processor0_interrupt_mask,
             Processor::Processor1 => self.processor1_interrupt_mask,
         };
-        unsafe { cortexm0p::nvic::has_pending_with_mask(mask) }
+
+        unsafe {
+            let res = cortexm0p::nvic::has_pending_with_mask(mask);
+            debug!("Inside checking for interrutps, has interrupts?: {res}");
+
+            res
+        }
     }
 
     fn mpu(&self) -> &Self::MPU {
@@ -180,13 +199,17 @@ impl Rp2040DefaultPeripherals<'_> {
 
 impl InterruptService for Rp2040DefaultPeripherals<'_> {
     unsafe fn service_interrupt(&self, interrupt: u32) -> bool {
+        debug!("Inside service interrupt function, interrupt {interrupt}");
+
         match interrupt {
             interrupts::PIO0_IRQ_0 => {
                 self.pio0.handle_interrupt();
+                debug!("Servicing interrupts for PIO0");
                 true
             }
             interrupts::PIO1_IRQ_0 => {
                 self.pio1.handle_interrupt();
+                debug!("Servicing interrupts for PIO1");
                 true
             }
             interrupts::TIMER_IRQ_0 => {
@@ -233,7 +256,10 @@ impl InterruptService for Rp2040DefaultPeripherals<'_> {
                 // Note that PWM interrupts are raised only during unit tests.
                 true
             }
-            _ => false,
+            _ => {
+                debug!("No interrupt found somehow");
+                false //false should be false but I want it to keep going
+            }
         }
     }
 }

@@ -1153,25 +1153,6 @@ impl StateMachine {
                         SMNumber::SM3 => IRQ0_INTE::SM3_RXNEMPTY::SET,
                     };
 
-                    let clearer = match self.sm_number {
-                        SMNumber::SM0 => IRQ0_INTE::SM0_RXNEMPTY::CLEAR,
-                        SMNumber::SM1 => IRQ0_INTE::SM1_RXNEMPTY::CLEAR,
-                        SMNumber::SM2 => IRQ0_INTE::SM2_RXNEMPTY::CLEAR,
-                        SMNumber::SM3 => IRQ0_INTE::SM3_RXNEMPTY::CLEAR,
-                    };
-                    let val = self.registers.irq0_inte.get();
-                    debug!("Current val of irq0 {val}");
-                    self.registers.irq0_inte.modify(clearer);
-
-                    for i in [
-                        IRQ0_INTE::SM3_RXNEMPTY::CLEAR,
-                        IRQ0_INTE::SM2_RXNEMPTY::CLEAR,
-                        IRQ0_INTE::SM1_RXNEMPTY::CLEAR,
-                        IRQ0_INTE::SM0_RXNEMPTY::CLEAR,
-                    ] {
-                        self.registers.irq0_inte.modify(i);
-                    }
-
                     let val = self.registers.irq0_inte.get();
                     debug!("Current val of irq0 {val}");
 
@@ -1535,6 +1516,7 @@ impl Pio {
 
     /// Handle interrupts
     pub fn handle_interrupt(&self) {
+        debug!("Attempting to handle interrupt");
         let ints = &self.registers.irq0_ints;
         for (sm, irq) in self.sms.iter().zip([
             IRQ0_INTS::SM0_TXNFULL,

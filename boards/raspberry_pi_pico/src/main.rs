@@ -565,10 +565,10 @@ pub unsafe fn start() -> (
     pin9.make_output();
 
     for _ in 0..10 {
-        pin6.toggle();
-        pin7.toggle();
-        pin8.toggle();
-        pin9.toggle();
+        pin6.toggle(); // gray line
+        pin7.toggle(); // brown line
+        pin8.toggle(); // red line, inside writer spi
+        pin9.toggle(); // orange line, inside receiver spi
     }
 
     // let pio = static_init!(Pio, Pio::new_pio1());
@@ -600,7 +600,7 @@ pub unsafe fn start() -> (
     );
 
     _pio_spi.set_wiggle_pin(pin8);
-    _receive_spi.set_wiggle_pin(pin6);
+    _receive_spi.set_wiggle_pin(pin9);
 
     // // debug!("Attempting to initialize PIO");
     let _ = _pio_spi.init();
@@ -615,37 +615,47 @@ pub unsafe fn start() -> (
     // put like 4 bytes in a queue, and read
     // seems to have space for 5 items only
     // should be read as [167, 212, 81, 177, 114, 246, 197, 113, 227]
-    // for i in [
-    //     0xA7u8, 0xD4u8, 0x51u8, 0xB1u8, 0x72u8, 0xF6u8, 0xC5u8, 0x71u8, 0xE3u8,
-    // ] {
-    //     debug!("writing word");
-    //     for _ in 0..10 {
-    //         pin7.toggle();
-    //     }
-    //     // _pio_spi.block_until_ready_to_write();
-    //     _pio_spi.write_word(i as u32);
-    //     // debug!("finished writing word");
+    for i in [
+        0xA7u8, /*0xD4u8, 0x51u8, 0xB1u8, 0x72u8, 0xF6u8, 0xC5u8, 0x71u8, 0xE3u8,*/
+    ] {
+        debug!("writing word");
+        for _ in 0..6 {
+            // shouw show 3 peaks
+            pin6.toggle();
+        }
+        // _pio_spi.block_until_ready_to_write();
+        _pio_spi.write_word(i as u32);
+        // debug!("finished writing word");
 
-    //     for _ in 0..10 {
-    //         pin8.toggle();
-    //     }
+        for _ in 0..6 {
+            pin7.toggle();
+        }
 
-    //     let val = match _receive_spi.read_word() {
-    //         Ok(data) => data,
-    //         Err(err) => 0,
-    //     };
-    //     debug!("recv this value: {val}");
+        let val = match _receive_spi.read_word() {
+            Ok(data) => data,
+            Err(err) => {
+                debug!("receive spi error");
+                for _ in 0..30 {
+                    // should show 15 peaks
+                    pin7.toggle();
+                }
+                0
+            }
+        };
+        debug!("recv this value: {val}");
 
-    //     for _ in 0..10 {
-    //         pin9.toggle();
-    //     }
+        for _ in 0..10 {
+            // shoud show 5 peaks
+            pin6.toggle();
+        }
 
-    //     _receive_spi.write_word(val);
+        let _ = _receive_spi.write_word(val);
 
-    //     for _ in 0..10 {
-    //         pin6.toggle();
-    //     }
-    // }
+        for _ in 0..10 {
+            // should show 5 peaks
+            pin7.toggle();
+        }
+    }
 
     // debug!("Trying to write a sentence");
 
@@ -708,51 +718,56 @@ pub unsafe fn start() -> (
     //     _receive_spi.write_word(val);
     // }
 
-    for _ in 0..10 {
-        pin6.toggle(); // wahoo
-    }
+    // for _ in 0..10 {
+    //     pin6.toggle(); // wahoo
+    // }
 
-    static mut out_arr: [u8; 10] = [
-        0xFFu8, 0x41u8, 0xA7u8, 0xD3u8, 0xB4u8, 0x75u8, 0x2Fu8, 0xC9u8, 0xD8u8, 0xFFu8,
-    ];
+    // static mut out_arr: [u8; 10] = [
+    //     0xFFu8, 0x41u8, 0xA7u8, 0xD3u8, 0xB4u8, 0x75u8, 0x2Fu8, 0xC9u8, 0xD8u8, 0xFFu8,
+    // ];
 
-    static mut in_arr: [u8; 10] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    // static mut in_arr: [u8; 10] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let mut in_buf: TakeCell<'static, [u8]> = TakeCell::empty();
-    in_buf.put(Some(in_arr.as_mut_slice()));
+    // let mut in_buf: TakeCell<'static, [u8]> = TakeCell::empty();
+    // in_buf.put(Some(in_arr.as_mut_slice()));
 
-    let mut out_buf: TakeCell<'static, [u8]> = TakeCell::empty();
-    out_buf.put(Some(out_arr.as_mut_slice()));
+    // let mut out_buf: TakeCell<'static, [u8]> = TakeCell::empty();
+    // out_buf.put(Some(out_arr.as_mut_slice()));
+    // // let wifi_spi = WiFiSpi::new(_pio_spi, None, out_buf.take().unwrap_or_default());
+
     // let wifi_spi = WiFiSpi::new(_pio_spi, None, out_buf.take().unwrap_or_default());
 
-    let wifi_spi = WiFiSpi::new(_pio_spi, None, out_buf.take().unwrap_or_default());
+    // static mut out_arr2: [u8; 10] = [
+    //     0xFFu8, 0x41u8, 0xA7u8, 0xD3u8, 0xB4u8, 0x75u8, 0x2Fu8, 0xC9u8, 0xD8u8, 0xFFu8,
+    // ];
 
-    static mut out_arr2: [u8; 10] = [
-        0xFFu8, 0x41u8, 0xA7u8, 0xD3u8, 0xB4u8, 0x75u8, 0x2Fu8, 0xC9u8, 0xD8u8, 0xFFu8,
-    ];
+    // for _ in 0..20 {
+    //     pin6.toggle(); // wahoo
+    // }
 
-    for _ in 0..20 {
-        pin6.toggle(); // wahoo
+    // let mut out_buf2: TakeCell<'static, [u8]> = TakeCell::empty();
+    // out_buf.put(Some(out_arr2.as_mut_slice()));
+
+    // let reader_spi = WiFiSpi::new(
+    //     _receive_spi,
+    //     in_buf.take(),
+    //     out_buf2.take().unwrap_or_default(),
+    // );
+
+    // for _ in 0..30 {
+    //     pin6.toggle(); // wahoo
+    // }
+
+    // let _ = wifi_spi.start();
+    // wifi_spi.print_read();
+
+    // let _ = reader_spi.start();
+    // reader_spi.print_read();
+
+    for _ in 0..40 {
+        // should show 20 peaks
+        pin7.toggle();
     }
-
-    let mut out_buf2: TakeCell<'static, [u8]> = TakeCell::empty();
-    out_buf.put(Some(out_arr2.as_mut_slice()));
-
-    let reader_spi = WiFiSpi::new(
-        _receive_spi,
-        in_buf.take(),
-        out_buf2.take().unwrap_or_default(),
-    );
-
-    for _ in 0..30 {
-        pin6.toggle(); // wahoo
-    }
-
-    let _ = wifi_spi.start();
-    wifi_spi.print_read();
-
-    let _ = reader_spi.start();
-    reader_spi.print_read();
 
     let raspberry_pi_pico = RaspberryPiPico {
         ipc: kernel::ipc::IPC::new(
@@ -779,6 +794,11 @@ pub unsafe fn start() -> (
         sysinfo::Platform::Asic => "ASIC",
         sysinfo::Platform::Fpga => "FPGA",
     };
+
+    for _ in 0..10 {
+        // should show 5 peaks
+        pin6.toggle();
+    }
 
     debug!(
         "RP2040 Revision {} {}",
@@ -819,6 +839,12 @@ pub unsafe fn start() -> (
         debug!("Error loading processes!");
         debug!("{:?}", err);
     });
+
+    for _ in 0..10 {
+        // should show 5 peaks
+        pin7.toggle();
+        pin8.toggle();
+    }
 
     // let mut pio: Pio = Pio::new_pio0();
 
