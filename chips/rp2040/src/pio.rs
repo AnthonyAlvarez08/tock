@@ -1152,10 +1152,6 @@ impl StateMachine {
                         SMNumber::SM2 => IRQ0_INTE::SM2_RXNEMPTY::SET,
                         SMNumber::SM3 => IRQ0_INTE::SM3_RXNEMPTY::SET,
                     };
-
-                    let val = self.registers.irq0_inte.get();
-                    debug!("Current val of irq0 {val}");
-
                     self.registers.irq0_inte.modify(field);
                     self.rx_state.set(StateMachineState::Waiting);
                     Err(ErrorCode::BUSY)
@@ -1172,15 +1168,13 @@ impl StateMachine {
     /// If SM is stalled on TX or in loop, this will block forever.
     pub fn pull_blocking(&self) -> Result<u32, ErrorCode> {
         if self.tx_full() && !self.is_enabled() {
-            debug!("either tx full or not enabled");
             return Err(ErrorCode::OFF);
         }
-        while self.rx_empty() {
-            // debug!("rx empty");
-        }
+        while self.rx_empty() {}
         Ok(self.registers.rxf[self.sm_number as usize].read(RXFx::RXF))
     }
 
+    // Immediately reads a word of data from a state machine's RX FIFO
     pub fn just_pull(&self) -> Result<u32, ErrorCode> {
         Ok(self.registers.rxf[self.sm_number as usize].read(RXFx::RXF))
     }
@@ -1212,7 +1206,6 @@ impl StateMachine {
     fn handle_tx_interrupt(&self) {
         match self.tx_state.get() {
             StateMachineState::Waiting => {
-                debug!("TX interrupt handler active");
                 // TX queue has emptied, clear interrupt
                 let field = match self.sm_number {
                     SMNumber::SM0 => IRQ0_INTE::SM0_TXNFULL::CLEAR,
@@ -1226,9 +1219,7 @@ impl StateMachine {
                     client.on_buffer_space_available();
                 });
             }
-            StateMachineState::Ready => {
-                debug!("TX interrupt handler did nothing for some reason");
-            }
+            StateMachineState::Ready => {}
         }
     }
 
@@ -1236,7 +1227,6 @@ impl StateMachine {
     fn handle_rx_interrupt(&self) {
         match self.rx_state.get() {
             StateMachineState::Waiting => {
-                debug!("RX interrupt handler active");
                 // RX queue has data, clear interrupt
                 let field = match self.sm_number {
                     SMNumber::SM0 => IRQ0_INTE::SM0_RXNEMPTY::CLEAR,
@@ -1253,9 +1243,7 @@ impl StateMachine {
                     );
                 });
             }
-            StateMachineState::Ready => {
-                debug!("RX interrupt handler did nothing for some reason");
-            }
+            StateMachineState::Ready => {}
         }
     }
 }
@@ -1523,7 +1511,6 @@ impl Pio {
 
     /// Handle interrupts
     pub fn handle_interrupt(&self) {
-        debug!("PIO handle interrupt");
         let ints = &self.registers.irq0_ints;
         for (sm, irq) in self.sms.iter().zip([
             IRQ0_INTS::SM0_TXNFULL,
