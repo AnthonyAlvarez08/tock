@@ -64,7 +64,7 @@ impl<I: InterruptService> Chip for Rp2040<'_, I> {
 
     fn service_pending_interrupts(&self) {
         debug_flush_queue!();
-        debug!("In service pending interrupts");
+        // debug!("In service pending interrupts");
 
         unsafe {
             let mask = match self.sio.get_processor() {
@@ -74,7 +74,7 @@ impl<I: InterruptService> Chip for Rp2040<'_, I> {
             loop {
                 debug_flush_queue!();
                 if let Some(interrupt) = cortexm0p::nvic::next_pending_with_mask(mask) {
-                    debug!("Saw interrutp {interrupt}");
+                    // debug!("Saw interrutp {interrupt}");
 
                     // ignore SIO_IRQ_PROC1 as it is intended for processor 1
                     // not able to unset its pending status
@@ -109,7 +109,7 @@ impl<I: InterruptService> Chip for Rp2040<'_, I> {
 
         unsafe {
             let res = cortexm0p::nvic::has_pending_with_mask(mask);
-            debug!("checking for irq, has?: {res}");
+            // debug!("checking for irq, has?: {res}");
 
             // if num_handled > 50 {
             //     return false;
@@ -207,17 +207,17 @@ impl Rp2040DefaultPeripherals<'_> {
 impl InterruptService for Rp2040DefaultPeripherals<'_> {
     unsafe fn service_interrupt(&self, interrupt: u32) -> bool {
         debug_flush_queue!();
-        debug!("Inside service interrupt for irq {interrupt}");
+        // debug!("Inside service interrupt for irq {interrupt}");
 
         match interrupt {
             interrupts::PIO0_IRQ_0 => {
-                debug!("Servicing irq for PIO0");
+                // debug!("Servicing irq for PIO0");
                 self.pio0.handle_interrupt();
 
                 true
             }
             interrupts::PIO1_IRQ_0 => {
-                debug!("Servicing irq for PIO1");
+                // debug!("Servicing irq for PIO1");
                 self.pio1.handle_interrupt();
                 true
             }
