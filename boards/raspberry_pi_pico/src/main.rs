@@ -21,6 +21,7 @@ use capsules_extra::wifi_spi::WiFiSpi;
 use components::date_time_component_static;
 use components::gpio::GpioComponent;
 use components::led::LedsComponent;
+use components::wifi_spi::WiFiSpi_Component;
 use enum_primitive::cast::FromPrimitive;
 use kernel::component::Component;
 use kernel::debug;
@@ -616,7 +617,7 @@ pub unsafe fn start() -> (
     // seems to have space for 5 items only
     // should be read as [167, 212, 81, 177, 114, 246, 197, 113, 227]
     for i in [
-        0xA7u8, /*0xD4u8, 0x51u8, 0xB1u8, 0x72u8, 0xF6u8, 0xC5u8, 0x71u8, 0xE3u8,*/
+        0xA7u8, 0xB4u8, /*0xD4u8, 0x51u8, 0xB1u8, 0x72u8, 0xF6u8, 0xC5u8, 0x71u8, 0xE3u8,*/
     ] {
         debug!("writing word");
         for _ in 0..6 {

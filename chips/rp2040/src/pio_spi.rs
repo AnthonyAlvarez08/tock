@@ -26,7 +26,7 @@ use kernel::utilities::registers::{register_bitfields, register_structs, ReadOnl
 use kernel::utilities::StaticRef;
 use kernel::{hil, ErrorCode};
 
-// TODO: refactor this so I can use just a PIO reference rather than a cell
+// TODO: figure out the whole rx/tx client thing
 
 pub struct PioSpi<'a> {
     clocks: &'a clocks::Clocks,
@@ -40,9 +40,6 @@ pub struct PioSpi<'a> {
 }
 
 const QUEUE_CLIENT: QueueClient<'static> = QueueClient::<'_> { wahoo: &0 };
-
-//* experimenting with having a singleton (or rather a doubleton) PioSpi Class
-//* as there should only be two of them anyway
 
 // static mut pio0 = Pio::new_pio0();
 // static clocks = Clocks::new();

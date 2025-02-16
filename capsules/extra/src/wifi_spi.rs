@@ -9,8 +9,14 @@ use kernel::ErrorCode;
 
 use capsules_core::virtualizers::virtual_spi::MuxSpiMaster;
 use kernel::hil;
-use kernel::hil::spi::{SpiMaster, SpiMasterClient, SpiMasterDevice};
+use kernel::hil::spi::{ClockPhase, ClockPolarity, SpiMaster, SpiMasterClient, SpiMasterDevice};
 
+pub const DRIVER_NUM: usize = 20;
+pub const WIFI_SPI_TX_SIZE: usize = 20;
+pub const WIFI_SPI_RX_SIZE: usize = 20;
+
+pub const TX_BUF_LEN: usize = WIFI_SPI_TX_SIZE;
+pub const RX_BUF_LEN: usize = WIFI_SPI_RX_SIZE;
 pub struct WiFiSpi<'a, Spi: SpiMasterDevice<'a>> {
     spi_master: &'a Spi,
     state: Cell<State>,
@@ -67,6 +73,14 @@ impl<'a, Spi: SpiMasterDevice<'a>> WiFiSpi<'a, Spi> {
         });
 
         Ok(())
+    }
+
+    pub fn configure(&self) -> Result<(), ErrorCode> {
+        self.spi_master.configure(
+            ClockPolarity::IdleHigh,
+            ClockPhase::SampleTrailing,
+            1_000_000,
+        )
     }
 }
 
