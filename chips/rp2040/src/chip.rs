@@ -56,8 +56,6 @@ impl<'a, I: InterruptService> Rp2040<'a, I> {
     }
 }
 
-static mut num_handled: usize = 0;
-
 impl<I: InterruptService> Chip for Rp2040<'_, I> {
     type MPU = cortexm0p::mpu::MPU;
     type UserspaceKernelBoundary = cortexm0p::syscall::SysCall;
@@ -90,7 +88,7 @@ impl<I: InterruptService> Chip for Rp2040<'_, I> {
                     // debug!("");
 
                     // manually break for debugging pruposes
-                    break;
+                    // break;
                 } else {
                     break;
                 }
@@ -110,10 +108,6 @@ impl<I: InterruptService> Chip for Rp2040<'_, I> {
         unsafe {
             let res = cortexm0p::nvic::has_pending_with_mask(mask);
             // debug!("checking for irq, has?: {res}");
-
-            // if num_handled > 50 {
-            //     return false;
-            // }
 
             res
         }

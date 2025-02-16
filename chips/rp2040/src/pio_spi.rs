@@ -121,18 +121,6 @@ impl<'a> PioSpi<'a> {
             self.pio.sm(self.sm_number).push_blocking(0);
         }
 
-        for _ in 0..22 {
-            // should show 11 peaks
-            match self.wiggle_pin {
-                Some(pin) => {
-                    pin.toggle();
-                }
-                _ => {
-                    debug!("no wiggle pin");
-                }
-            }
-        }
-
         data = match self.pio.sm(self.sm_number).pull() {
             Ok(res) => res,
             Err(err) => {
@@ -140,18 +128,6 @@ impl<'a> PioSpi<'a> {
                 return Err(err);
             }
         };
-        // seeing the second pin wiggle means it returned something valid
-        for _ in 0..14 {
-            // should show 7 peaks
-            match self.wiggle_pin {
-                Some(pin) => {
-                    pin.toggle();
-                }
-                _ => {
-                    debug!("no wiggle pin");
-                }
-            }
-        }
 
         Ok(data)
     }
@@ -288,17 +264,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             &custom_config,
         );
 
-        // subscribe to interrupts
-        //*  currently doesnt work
-        // debug!("Now enabling interrupts\n");
-
-        // for i in self.pio.sm(self.sm_number).get_interrupt_sources() {
-        //     self.pio.set_irq_source(0, i, true);
-        // }
-        // for i in self.pio.sm(self.sm_number).get_interrupt_sources() {
-        //     self.pio.set_irq_source(1, i, true);
-        // }
-
         // subscribe to the interrupts I guess?
         self.pio.sm(self.sm_number).set_tx_client(&QUEUE_CLIENT);
         self.pio.sm(self.sm_number).set_rx_client(&QUEUE_CLIENT);
@@ -344,31 +309,10 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
                 "[PIOSPI] idx {writedex} of writebuf: {}",
                 write_buffer[writedex]
             );
-            for _ in 0..10 {
-                match self.wiggle_pin {
-                    Some(pin) => {
-                        pin.toggle();
-                    }
-                    _ => {
-                        debug!("no wiggle pin");
-                    }
-                }
-            }
 
             debug!("[PIOSPI] called read write byte");
             let res = self.read_write_byte(write_buffer[writedex]);
             debug!("[PIOSPI] passed read write byte");
-
-            for _ in 0..10 {
-                match self.wiggle_pin {
-                    Some(pin) => {
-                        pin.toggle();
-                    }
-                    _ => {
-                        debug!("no wiggle pin");
-                    }
-                }
-            }
 
             if reading {
                 debug!("[PIOSPI] About to commit a read");
@@ -385,28 +329,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
                 debug!("[PIOSPI] Passed reading");
             }
 
-            for _ in 0..10 {
-                match self.wiggle_pin {
-                    Some(pin) => {
-                        pin.toggle();
-                    }
-                    _ => {
-                        debug!("no wiggle pin");
-                    }
-                }
-            }
             writedex += 1;
-        }
-
-        for _ in 0..10 {
-            match self.wiggle_pin {
-                Some(pin) => {
-                    pin.toggle();
-                }
-                _ => {
-                    debug!("no wiggle pin");
-                }
-            }
         }
 
         Ok(())
@@ -506,18 +429,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
 // TODO: implement PioTxClient
 // TODO: implement PioRxCLient
-
-/*
-
-pub trait PioTxClient {
-    fn on_buffer_space_available(&self);
-}
-
-pub trait PioRxClient {
-    fn on_data_received(&self, data: u32);
-}
-
-*/
 
 impl<'a> PioTxClient for PioSpi<'a> {
     fn on_buffer_space_available(&self) {
