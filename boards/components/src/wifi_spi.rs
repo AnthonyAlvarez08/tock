@@ -18,7 +18,7 @@ macro_rules! wifi_spi_component_static {
             capsules_core::virtualizers::virtual_spi::VirtualSpiMasterDevice<'static, $S>
         );
         let wifi_spi = kernel::static_buf!(
-            capsules_extra:wifi_spi::WiFiSpi<
+            capsules_extra::wifi_spi::WiFiSpi<
                 'static,
                 capsules_core::virtualizers::virtual_spi::VirtualSpiMasterDevice<'static, $S>,
             >
@@ -28,9 +28,9 @@ macro_rules! wifi_spi_component_static {
     };};
 }
 
-pub type WiFiSpi_ComponentType<S> = capsules_extra::wifi_spi::WiFiSpi<'static, S>;
+pub type WiFiSpiComponentType<S> = capsules_extra::wifi_spi::WiFiSpi<'static, S>;
 
-pub struct WiFiSpi_Component<
+pub struct WiFiSpiComponent<
     S: 'static + spi::SpiMaster<'static>,
     CS: spi::cs::IntoChipSelect<S::ChipSelect, spi::cs::ActiveLow>,
 > {
@@ -43,7 +43,7 @@ pub struct WiFiSpi_Component<
 impl<
         S: 'static + spi::SpiMaster<'static>,
         CS: spi::cs::IntoChipSelect<S::ChipSelect, spi::cs::ActiveLow>,
-    > WiFiSpi_Component<S, CS>
+    > WiFiSpiComponent<S, CS>
 {
     pub fn new(
         spi_mux: &'static MuxSpiMaster<'static, S>,
@@ -63,7 +63,7 @@ impl<
 impl<
         S: 'static + spi::SpiMaster<'static>,
         CS: spi::cs::IntoChipSelect<S::ChipSelect, spi::cs::ActiveLow>,
-    > Component for WiFiSpi_Component<S, CS>
+    > Component for WiFiSpiComponent<S, CS>
 {
     type StaticInput = (
         &'static mut MaybeUninit<VirtualSpiMasterDevice<'static, S>>,

@@ -21,7 +21,7 @@ use capsules_extra::wifi_spi::WiFiSpi;
 use components::date_time_component_static;
 use components::gpio::GpioComponent;
 use components::led::LedsComponent;
-use components::wifi_spi::WiFiSpi_Component;
+use components::wifi_spi::WiFiSpiComponent;
 use enum_primitive::cast::FromPrimitive;
 use kernel::component::Component;
 use kernel::debug;
@@ -657,6 +657,23 @@ pub unsafe fn start() -> (
             pin7.toggle();
         }
     }
+
+    let spi_mux = components::spi::SpiMuxComponent::new(&peripherals.spi0)
+        .finalize(components::spi_mux_component_static!(rp2040::spi::Spi));
+
+    let wifi_spi = components::wifi_spi::WiFiSpiComponent::new(
+        spi_mux,
+        peripherals.pins.get_pin(RPGpio::GPIO14),
+        board_kernel,
+        capsules_extra::wifi_spi::DRIVER_NUM,
+    )
+    .finalize(components::wifi_spi_component_static!(
+        // spi type
+        rp2040::spi::Spi
+    ));
+
+    wifi_spi.start();
+    wifi_spi.print_read();
 
     // debug!("Trying to write a sentence");
 
