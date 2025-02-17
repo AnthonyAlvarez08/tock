@@ -97,5 +97,6 @@ pub enum NUM {
     DateTime              = 0x90007,
     CycleCount            = 0x90008,
     Servo                 = 0x90009,
+    WiFiSpi               = 0x9000A,
 }
 }

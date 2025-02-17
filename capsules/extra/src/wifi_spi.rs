@@ -3,15 +3,18 @@ use core::ops::Deref;
 use kernel::debug;
 use kernel::platform::mpu::MPU;
 use kernel::static_init;
+use kernel::syscall::{CommandReturn, SyscallDriver};
 use kernel::utilities::cells::{MapCell, OptionalCell, TakeCell};
 use kernel::utilities::leasable_buffer::SubSliceMut;
-use kernel::ErrorCode;
+use kernel::{ErrorCode, ProcessId};
 
+use capsules_core::driver;
 use capsules_core::virtualizers::virtual_spi::MuxSpiMaster;
+use kernel::grant::{AllowRoCount, AllowRwCount, Grant, UpcallCount};
 use kernel::hil;
 use kernel::hil::spi::{ClockPhase, ClockPolarity, SpiMaster, SpiMasterClient, SpiMasterDevice};
 
-pub const DRIVER_NUM: usize = 20;
+pub const DRIVER_NUM: usize = driver::NUM::WiFiSpi as usize;
 pub const WIFI_SPI_TX_SIZE: usize = 20;
 pub const WIFI_SPI_RX_SIZE: usize = 20;
 
@@ -22,19 +25,25 @@ pub struct WiFiSpi<'a, Spi: SpiMasterDevice<'a>> {
     state: Cell<State>,
     rxbuffer: MapCell<SubSliceMut<'static, u8>>,
     txbuffer: MapCell<SubSliceMut<'static, u8>>,
+    // grants: Grant<App, UpcallCount<1>, AllowRoCount<0>, AllowRwCount<0>>,
 }
+
+#[derive(Default)]
+pub struct App {}
 
 impl<'a, Spi: SpiMasterDevice<'a>> WiFiSpi<'a, Spi> {
     pub fn new(
         spi_master: &'a Spi,
-        in_buffer: &'static mut [u8],
-        out_buffer: &'static mut [u8],
+        txbuffer: &'static mut [u8; WIFI_SPI_TX_SIZE],
+        rxbuffer: &'static mut [u8; WIFI_SPI_RX_SIZE],
+        // grants: Grant<App, UpcallCount<1>, AllowRoCount<0>, AllowRwCount<0>>,
     ) -> Self {
         Self {
-            rxbuffer: MapCell::new(SubSliceMut::new(in_buffer)),
-            txbuffer: MapCell::new(SubSliceMut::new(out_buffer)),
+            rxbuffer: MapCell::new((&mut rxbuffer[..]).into()),
+            txbuffer: MapCell::new((&mut txbuffer[..]).into()),
             spi_master: spi_master,
             state: Cell::new(State::Suspend),
+            // grants: grants,
         }
     }
 
@@ -130,5 +139,37 @@ impl<'a, Spi: SpiMasterDevice<'a>> SpiMasterClient for WiFiSpi<'a, Spi> {
                 idx += 1;
             }
         });
+    }
+}
+
+impl<'a, Spi: SpiMasterDevice<'a>> SyscallDriver for WiFiSpi<'a, Spi> {
+    fn command(
+        &self,
+        command_num: usize,
+        data1: usize,
+        data2: usize,
+        process_id: ProcessId,
+    ) -> CommandReturn {
+        if command_num == 0 {
+            return CommandReturn::success();
+        }
+
+        let id = process_id.id();
+        debug!("WiFiSpi driver called with {data1} {data2}, for processid {id}");
+
+        match command_num {
+            // Check is sensor is correctly connected
+            1 => {
+                // do nothing for now
+                return CommandReturn::success();
+            }
+            // default
+            _ => CommandReturn::failure(ErrorCode::NOSUPPORT),
+        }
+    }
+
+    fn allocate_grant(&self, processid: ProcessId) -> Result<(), kernel::process::Error> {
+        // self.grants.enter(processid, |_, _| {})
+        Ok(())
     }
 }
