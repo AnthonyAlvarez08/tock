@@ -27,6 +27,7 @@ use kernel::utilities::StaticRef;
 use kernel::{hil, ErrorCode};
 
 // TODO: figure out the whole rx/tx client thing
+// TODO: make it hold on to a spi master client
 
 pub struct PioSpi<'a> {
     clocks: &'a clocks::Clocks,
@@ -36,35 +37,12 @@ pub struct PioSpi<'a> {
     in_pin: u32,
     sm_number: SMNumber,
     pio_number: PIONumber,
-    wiggle_pin: Option<&'a RPGpioPin<'a>>,
+    // wiggle_pin: Option<&'a RPGpioPin<'a>>,
+    // interrupt_client: &'static PioInterruptClient<'static>,
+    client: Option<&'a dyn SpiMasterClient>,
 }
 
-const QUEUE_CLIENT: QueueClient<'static> = QueueClient::<'_> { wahoo: &0 };
-
-// static mut pio0 = Pio::new_pio0();
-// static clocks = Clocks::new();
-
-// static PioSpi0 : PioSpi<'static> = PioSpi::new(
-//     &mut pio0,
-//     &clocks,
-//     10, // side set = clock
-//     11, // in
-//     12, // out
-//     SMNumber::SM0,
-//     PIONumber::PIO0,
-// );
-
-// static mut pio1 = Pio::new_pio1();
-
-// static PioSpi1 : PioSpi<'static> = PioSpi::new(
-//     &mut pio1,
-//     &clocks,
-//     19, // sideset = clock
-//     20, // in
-//     21, // out
-//     SMNumber::SM1,
-//     PIONumber::PIO1,
-// );
+// const QUEUE_CLIENT: FIFOClient<'static> = FIFOClient::<'_> { wahoo: &0 };
 
 impl<'a> PioSpi<'a> {
     pub fn new(
@@ -75,6 +53,7 @@ impl<'a> PioSpi<'a> {
         out_pin: u32,
         sm_number: SMNumber,
         pio_number: PIONumber,
+        // interrupt_client: &'static PioInterruptClient<'static>,
     ) -> Self {
         Self {
             clocks,
@@ -84,13 +63,15 @@ impl<'a> PioSpi<'a> {
             out_pin: out_pin,
             sm_number: sm_number,
             pio_number: pio_number,
-            wiggle_pin: None::<&'a RPGpioPin<'a>>,
+            // wiggle_pin: None::<&'a RPGpioPin<'a>>,
+            // interrupt_client: interrupt_client,
+            client: None,
         }
     }
 
-    pub fn set_wiggle_pin(&mut self, pin: &'a RPGpioPin<'a>) {
-        self.wiggle_pin.insert(pin);
-    }
+    // pub fn set_wiggle_pin(&mut self, pin: &'a RPGpioPin<'a>) {
+    //     self.wiggle_pin.insert(pin);
+    // }
 
     pub fn block_until_empty(&self) {
         while !self.pio.sm(self.sm_number).rx_empty() || !self.pio.sm(self.sm_number).tx_empty() {
@@ -201,36 +182,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             0x5101, /*  1: in     pins, 1         side 1 [1] */
         ];
 
-        /*
-
-        state machine configs
-
-        pub out_pins_count: u32,
-        pub out_pins_base: u32,
-        pub set_pins_count: u32,
-        pub set_pins_base: u32,
-        pub in_pins_base: u32,
-        pub side_set_base: u32,
-        pub side_set_opt_enable: bool,
-        pub side_set_bit_count: u32,
-        pub side_set_pindirs: bool,
-        pub wrap: u32,
-        pub wrap_to: u32,
-        pub in_shift_direction_right: bool,
-        pub in_autopush: bool,
-        pub in_push_threshold: u32,
-        pub out_shift_direction_right: bool,
-        pub out_autopull: bool,
-        pub out_pull_threshold: u32,
-        pub jmp_pin: u32,
-        pub out_special_sticky: bool,
-        pub out_special_has_enable_pin: bool,
-        pub out_special_enable_pin_index: u32,
-        pub mov_status_sel: PioMovStatusType,
-        pub mov_status_n: u32,
-        pub div_int: u32,
-        pub div_frac: u32,*/
-
         self.pio.init();
         self.pio.add_program16(None::<usize>, &asm);
         // TODO: add custom configurations if necessary
@@ -262,13 +213,19 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         );
 
         // subscribe to the interrupts I guess?
-        self.pio.sm(self.sm_number).set_tx_client(&QUEUE_CLIENT);
-        self.pio.sm(self.sm_number).set_rx_client(&QUEUE_CLIENT);
+        // self.pio
+        //     .sm(self.sm_number)
+        //     .set_tx_client(self.interrupt_client);
+        // self.pio
+        //     .sm(self.sm_number)
+        //     .set_rx_client(self.interrupt_client);
 
         Ok(())
     }
 
-    fn set_client(&self, client: &'a dyn SpiMasterClient) {}
+    fn set_client(&self, client: &'a dyn SpiMasterClient) {
+        // self.client.
+    }
 
     fn is_busy(&self) -> bool {
         true
@@ -439,34 +396,41 @@ impl<'a> PioRxClient for PioSpi<'a> {
     }
 }
 
-struct QueueClient<'a> {
-    wahoo: &'a i32,
-}
+// pub struct PioInterruptClient<'a> {
+//     rxbuffer: MapCell<SubSliceMut<'a, u8>>,
+//     txbuffer: MapCell<SubSliceMut<'a, u8>>,
+// }
 
-impl<'a> QueueClient<'a> {
-    pub fn new() -> Self {
-        Self { wahoo: &0 }
-    }
-}
+// impl<'a> PioInterruptClient<'a> {
+//     pub fn new(rxbuffer: &'static mut [u8], txbuffer: &'static mut [u8]) -> Self {
+//         Self {
+//             rxbuffer: MapCell::new(SubSliceMut::new(rxbuffer)),
+//             txbuffer: MapCell::new(SubSliceMut::new(txbuffer)),
+//         }
+//     }
+// }
 
-impl<'a> PioTxClient for QueueClient<'a> {
-    fn on_buffer_space_available(&self) {
-        let pin = RPGpioPin::new(RPGpio::GPIO9);
-        pin.make_output();
-        for i in 0..16 {
-            pin.toggle();
-        }
-        debug!("INSIDE INTERRUPT HANDLER buffer space available\n");
-    }
-}
+// impl<'a> PioTxClient for PioInterruptClient<'a> {
+//     fn on_buffer_space_available(&self) {
+//         let pin = RPGpioPin::new(RPGpio::GPIO9);
+//         pin.make_output();
+//         for i in 0..16 {
+//             pin.toggle();
+//         }
+//         debug!("INSIDE INTERRUPT HANDLER buffer space available\n");
+//     }
+// }
 
-impl<'a> PioRxClient for QueueClient<'a> {
-    fn on_data_received(&self, data: u32) {
-        let pin = RPGpioPin::new(RPGpio::GPIO9);
-        pin.make_output();
-        for i in 0..16 {
-            pin.toggle();
-        }
-        debug!("INSIDE INTERRUPT HANDLER Received data {data}\n");
-    }
-}
+// impl<'a> PioRxClient for PioInterruptClient<'a> {
+//     fn on_data_received(&self, data: u32) {
+//         // TODO: put data in the buffer
+//         self.rxbuffer.map(|buf| {});
+
+//         let pin = RPGpioPin::new(RPGpio::GPIO9);
+//         pin.make_output();
+//         for i in 0..16 {
+//             pin.toggle();
+//         }
+//         debug!("INSIDE INTERRUPT HANDLER Received data {data}\n");
+//     }
+// }

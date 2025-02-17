@@ -51,6 +51,7 @@ use rp2040::i2c::I2c;
 use rp2040::pio::Pio;
 use rp2040::pio::{PIONumber, SMNumber, StateMachineConfiguration};
 use rp2040::pio_pwm::PioPwm;
+// use rp2040::pio_spi::PioInterruptClient;
 use rp2040::pio_spi::PioSpi;
 use rp2040::resets::Peripheral;
 use rp2040::sysinfo;
@@ -585,6 +586,9 @@ pub unsafe fn start() -> (
             PIONumber::PIO0,
         )
     );
+    // make the pio subscribe to interrupts
+    peripherals.pio0.sm(SMNumber::SM0).set_rx_client(_pio_spi);
+    peripherals.pio0.sm(SMNumber::SM0).set_tx_client(_pio_spi);
 
     // let pio2 = static_init!(Pio, Pio::new_pio1());
     let _receive_spi: &mut PioSpi<'static> = static_init!(
@@ -599,9 +603,15 @@ pub unsafe fn start() -> (
             PIONumber::PIO1,
         )
     );
-
-    _pio_spi.set_wiggle_pin(pin8);
-    _receive_spi.set_wiggle_pin(pin9);
+    // make the pio subscribe to interrupts
+    peripherals
+        .pio1
+        .sm(SMNumber::SM1)
+        .set_rx_client(_receive_spi);
+    peripherals
+        .pio1
+        .sm(SMNumber::SM1)
+        .set_tx_client(_receive_spi);
 
     // // debug!("Attempting to initialize PIO");
     let _ = _pio_spi.init();
