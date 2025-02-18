@@ -74,8 +74,8 @@ impl<
     type Output = &'static WiFiSpi<'static, VirtualSpiMasterDevice<'static, S>>;
 
     fn finalize(self, static_buffer: Self::StaticInput) -> Self::Output {
-        // let grant_cap = create_capability!(capabilities::MemoryAllocationCapability);
-        // let grant = self.board_kernel.create_grant(self.driver_num, &grant_cap);
+        let grant_cap = create_capability!(capabilities::MemoryAllocationCapability);
+        let grant = self.board_kernel.create_grant(self.driver_num, &grant_cap);
 
         let spi_device = static_buffer.0.write(VirtualSpiMasterDevice::new(
             self.spi_mux,
@@ -92,7 +92,7 @@ impl<
 
         let wifi_spi = static_buffer
             .1
-            .write(WiFiSpi::new(spi_device, txbuffer, rxbuffer));
+            .write(WiFiSpi::new(spi_device, txbuffer, rxbuffer, grant));
         spi_device.set_client(wifi_spi);
 
         // TODO verify SPI return value

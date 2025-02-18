@@ -25,7 +25,7 @@ pub struct WiFiSpi<'a, Spi: SpiMasterDevice<'a>> {
     state: Cell<State>,
     rxbuffer: MapCell<SubSliceMut<'static, u8>>,
     txbuffer: MapCell<SubSliceMut<'static, u8>>,
-    // grants: Grant<App, UpcallCount<1>, AllowRoCount<0>, AllowRwCount<0>>,
+    grants: Grant<App, UpcallCount<1>, AllowRoCount<0>, AllowRwCount<0>>,
 }
 
 #[derive(Default)]
@@ -36,14 +36,14 @@ impl<'a, Spi: SpiMasterDevice<'a>> WiFiSpi<'a, Spi> {
         spi_master: &'a Spi,
         txbuffer: &'static mut [u8; WIFI_SPI_TX_SIZE],
         rxbuffer: &'static mut [u8; WIFI_SPI_RX_SIZE],
-        // grants: Grant<App, UpcallCount<1>, AllowRoCount<0>, AllowRwCount<0>>,
+        grants: Grant<App, UpcallCount<1>, AllowRoCount<0>, AllowRwCount<0>>,
     ) -> Self {
         Self {
             rxbuffer: MapCell::new((&mut rxbuffer[..]).into()),
             txbuffer: MapCell::new((&mut txbuffer[..]).into()),
             spi_master: spi_master,
             state: Cell::new(State::Suspend),
-            // grants: grants,
+            grants: grants,
         }
     }
 
@@ -169,7 +169,7 @@ impl<'a, Spi: SpiMasterDevice<'a>> SyscallDriver for WiFiSpi<'a, Spi> {
     }
 
     fn allocate_grant(&self, processid: ProcessId) -> Result<(), kernel::process::Error> {
-        // self.grants.enter(processid, |_, _| {})
-        Ok(())
+        self.grants.enter(processid, |_, _| {})
+        // Ok(())
     }
 }
