@@ -39,7 +39,7 @@ pub struct PioSpi<'a> {
     pio_number: PIONumber,
     // wiggle_pin: Option<&'a RPGpioPin<'a>>,
     // interrupt_client: &'static PioInterruptClient<'static>,
-    client: Option<&'a dyn SpiMasterClient>,
+    client: OptionalCell<&'a dyn SpiMasterClient>,
 }
 
 // const QUEUE_CLIENT: FIFOClient<'static> = FIFOClient::<'_> { wahoo: &0 };
@@ -65,7 +65,7 @@ impl<'a> PioSpi<'a> {
             pio_number: pio_number,
             // wiggle_pin: None::<&'a RPGpioPin<'a>>,
             // interrupt_client: interrupt_client,
-            client: None,
+            client: OptionalCell::empty(),
         }
     }
 
@@ -89,9 +89,7 @@ impl<'a> PioSpi<'a> {
     }
 
     pub fn read_word(&self) -> Result<u32, ErrorCode> {
-        let mut data: u32 = 0;
-        // Read data from the RX FIFO
-        // self.pio.handle_interrupt();
+        let mut data: u32;
 
         // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
         // in this example they write 0 out before they're reading
@@ -111,8 +109,6 @@ impl<'a> PioSpi<'a> {
     }
 
     pub fn write_word(&self, val: u32) -> Result<(), ErrorCode> {
-        self.pio.handle_interrupt();
-
         // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
         // in this example they reading and dumping after they're writing
         self.pio.sm(self.sm_number).push_blocking(val);
@@ -224,7 +220,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn set_client(&self, client: &'a dyn SpiMasterClient) {
-        // self.client.
+        self.client.set(client);
     }
 
     fn is_busy(&self) -> bool {
@@ -286,12 +282,20 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             writedex += 1;
         }
 
+        // map function automatically handles client being none
+        // calls the client to notify that read write is done
+        self.client.map(|client| {
+            let ln = write_buffer.len();
+
+            let read_buf_out = if reading { Some(reader) } else { None };
+
+            client.read_write_done(write_buffer, read_buf_out, Ok(ln));
+        });
+
         Ok(())
     }
 
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
-        self.pio.handle_interrupt();
-
         // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
         // in this example they reading and dumping after they're writing
         self.pio.sm(self.sm_number).push_blocking(val as u32);
@@ -308,8 +312,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
     fn read_byte(&self) -> Result<u8, ErrorCode> {
         let mut data: u32 = 0;
-        // Read data from the RX FIFO
-        self.pio.handle_interrupt();
 
         // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
         // in this example they write 0 out before they're reading
@@ -330,7 +332,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     fn read_write_byte(&self, val: u8) -> Result<u8, ErrorCode> {
         let mut data: u32 = 0;
         // Read data from the RX FIFO
-        self.pio.handle_interrupt();
 
         // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
         // in this example they write 0 out before they're reading

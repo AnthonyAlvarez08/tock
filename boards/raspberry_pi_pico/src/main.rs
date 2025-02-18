@@ -681,6 +681,7 @@ pub unsafe fn start() -> (
         // spi type
         rp2040::spi::Spi
     ));
+    _pio_spi.set_client(wifi_spi);
 
     wifi_spi.start();
     wifi_spi.print_read();
