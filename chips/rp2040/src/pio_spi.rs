@@ -46,6 +46,15 @@ pub struct PioSpi<'a> {
     rx_buffer: MapCell<SubSliceMut<'static, u8>>,
     rx_position: Cell<usize>,
     len: Cell<usize>,
+    state: Cell<PioSpiState>,
+}
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum PioSpiState {
+    Free = 0b00,
+    Writing = 0b01,
+    Reading = 0b10,
+    ReadingWriting = 0b11,
 }
 
 // const QUEUE_CLIENT: FIFOClient<'static> = FIFOClient::<'_> { wahoo: &0 };
@@ -79,6 +88,7 @@ impl<'a> PioSpi<'a> {
             rx_position: Cell::new(0),
 
             len: Cell::new(0),
+            state: Cell::new(PioSpiState::Free),
         }
     }
 
@@ -252,67 +262,41 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             Option<SubSliceMut<'static, u8>>,
         ),
     > {
+        // buffer should be at least one thing big
+        if write_buffer.len() < 1 {
+            return Err((ErrorCode::INVAL, write_buffer, read_buffer));
+        }
+
         // TODO
         // keep track of the new buffers
-        self.tx_buffer.set(write_buffer);
+        self.len.replace(write_buffer.len());
+        self.tx_buffer.replace(write_buffer);
+        self.tx_position.set(0);
+
+        self.state.replace(PioSpiState::Writing);
+
         if let Some(readbuf) = read_buffer {
-            self.rx_buffer.set(readbuf);
+            self.rx_buffer.replace(readbuf);
+            self.state.replace(PioSpiState::ReadingWriting);
+            self.rx_position.set(0);
         }
 
-        let mut reading: bool = false;
-
-        // let writer = SubSlice::new(write_buffer.borrow().into());
-
-        let mut reader = match read_buffer {
-            Some(buf) => {
-                reading = true;
-                buf
-            }
-            _ => SubSliceMut::new(&mut []),
-        };
-
-        let mut readdex: usize = 0;
-        let mut writedex: usize = 0;
-
-        while writedex < write_buffer.len() {
-            debug!(
-                "[PIOSPI] idx {writedex} of writebuf: {}",
-                write_buffer[writedex]
-            );
-
-            // debug!("[PIOSPI] called read write byte");
-            let res = self.read_write_byte(write_buffer[writedex]);
-            // debug!("[PIOSPI] passed read write byte");
-
-            if reading {
-                // debug!("[PIOSPI] About to commit a read");
-                match res {
-                    Ok(val) => {
-                        // do stuff
-                        reader[readdex] = val;
-                        readdex += 1;
-                        debug!("[PIOSPI] Passed reading");
-                    }
-                    Err(error) => {
-                        // return Err((error, write_buffer, Some(reader)));
-                    }
+        self.tx_buffer.map(|buf| {
+            // try to read and write one byte to trigger interrupts
+            let res = self.read_write_byte(buf[0]);
+            match res {
+                Ok(data) => {
+                    self.rx_buffer.map(|buf| {
+                        buf[0] = data;
+                    });
+                    self.rx_position.set(1);
+                    self.tx_position.set(1);
+                }
+                Err(err) => {
+                    // expected but keep going
                 }
             }
-
-            writedex += 1;
-        }
-
-        // map function automatically handles client being none
-        // calls the client to notify that read write is done
-
-        // ! commented out because  not actually done
-        // self.client.map(|client| {
-        //     let ln = write_buffer.len();
-
-        //     let read_buf_out = if reading { Some(reader) } else { None };
-
-        //     client.read_write_done(write_buffer, read_buf_out, Ok(ln));
-        // });
+        });
 
         Ok(())
     }
@@ -407,12 +391,37 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 impl<'a> PioTxClient for PioSpi<'a> {
     fn on_buffer_space_available(&self) {
         // TODO: make this keep writing data
+        debug!("INSIDE INTERRUPT HANDLER buffer space available\n");
+
+        match self.state.get() {
+            // if currently writing try to write the next byte
+            PioSpiState::Writing | PioSpiState::ReadingWriting => {
+                // write one byte
+                self.tx_buffer.map(|buf| {
+                    let cursor = self.tx_position.get();
+                    match self.write_byte(buf[cursor]) {
+                        Ok(()) => {
+                            self.tx_position.set(cursor + 1);
+
+                            if self.tx_position.get() == self.len.get() {
+                                // should maybe not set it to free if it is writing
+                                self.state.set(PioSpiState::Free);
+                            }
+                        }
+                        Err(error) => {
+                            // ???????
+                        }
+                    }
+                });
+            }
+            _ => {}
+        }
+
         let pin = RPGpioPin::new(RPGpio::GPIO9);
         pin.make_output();
         for i in 0..16 {
             pin.toggle();
         }
-        debug!("INSIDE INTERRUPT HANDLER buffer space available\n");
     }
 }
 
@@ -425,5 +434,30 @@ impl<'a> PioRxClient for PioSpi<'a> {
             pin.toggle();
         }
         debug!("INSIDE INTERRUPT HANDLER Received data {data}\n");
+
+        match self.state.get() {
+            // if currently writing try to write the next byte
+            PioSpiState::Reading | PioSpiState::ReadingWriting => {
+                // write one byte
+                self.rx_buffer.map(|buf| {
+                    let cursor = self.rx_position.get();
+                    match self.read_byte() {
+                        Ok(data) => {
+                            buf[cursor] = data;
+                            self.rx_position.set(cursor + 1);
+
+                            if self.rx_position.get() == self.len.get() {
+                                // should maybe not set it to free if it is reading
+                                self.state.set(PioSpiState::Free);
+                            }
+                        }
+                        Err(error) => {
+                            // ???????
+                        }
+                    }
+                });
+            }
+            _ => {}
+        }
     }
 }
