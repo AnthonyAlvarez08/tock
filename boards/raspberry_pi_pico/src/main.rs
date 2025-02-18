@@ -675,7 +675,7 @@ pub unsafe fn start() -> (
     // 24 = both input and output
     // 23 = power on
 
-    let spi_mux = components::spi::SpiMuxComponent::new(_pio_spi)
+    let spi_mux = components::spi::SpiMuxComponent::new(_receive_spi)
         .finalize(components::spi_mux_component_static!(PioSpi));
 
     let wifi_spi = components::wifi_spi::WiFiSpiComponent::new(
@@ -688,29 +688,12 @@ pub unsafe fn start() -> (
         // spi type
         PioSpi
     ));
-    _pio_spi.set_client(wifi_spi);
-
-    let spi_mux2 = components::spi::SpiMuxComponent::new(_receive_spi)
-        .finalize(components::spi_mux_component_static!(PioSpi));
-
-    let receive_wifi_spi = components::wifi_spi::WiFiSpiComponent::new(
-        spi_mux2,
-        peripherals.pins.get_pin(RPGpio::GPIO25),
-        board_kernel,
-        capsules_extra::wifi_spi::DRIVER_NUM,
-    )
-    .finalize(components::wifi_spi_component_static!(
-        // spi type
-        PioSpi
-    ));
-    _receive_spi.set_client(receive_wifi_spi);
+    _receive_spi.set_client(wifi_spi);
 
     // I temporarily made the buffer sizes 3 for the spi capsule
     static mut outbuf: [u8; 3] = [0xA7u8, 0xB4u8, 0x43u8];
+    _pio_spi.write_word(0xA7);
     let _ = wifi_spi.start(&mut outbuf, 0);
-
-    static mut outbuf2: [u8; 3] = [0u8; 3];
-    let _ = receive_wifi_spi.start(&mut outbuf2, 1);
 
     // wifi_spi.print_read();
 

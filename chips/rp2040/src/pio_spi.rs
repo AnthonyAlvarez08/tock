@@ -11,6 +11,7 @@ use core::borrow::Borrow;
 use crate::clocks::{self};
 use crate::gpio::{GpioFunction, RPGpio, RPGpioPin};
 use crate::pio::{PIONumber, Pio, PioRxClient, PioTxClient, SMNumber, StateMachineConfiguration};
+use core::cell::Cell;
 use kernel::debug;
 use kernel::hil::gpio::{Configure, Output};
 use kernel::hil::spi::cs::ChipSelectPolar;
@@ -19,7 +20,6 @@ use kernel::hil::spi::SpiMasterClient;
 use kernel::hil::spi::{ClockPhase, ClockPolarity};
 use kernel::utilities::cells::MapCell;
 use kernel::utilities::cells::OptionalCell;
-use kernel::utilities::cells::TakeCell;
 use kernel::utilities::leasable_buffer::{SubSlice, SubSliceMut};
 use kernel::utilities::registers::interfaces::{ReadWriteable, Readable, Writeable};
 use kernel::utilities::registers::{register_bitfields, register_structs, ReadOnly, ReadWrite};
@@ -40,6 +40,12 @@ pub struct PioSpi<'a> {
     // wiggle_pin: Option<&'a RPGpioPin<'a>>,
     // interrupt_client: &'static PioInterruptClient<'static>,
     client: OptionalCell<&'a dyn SpiMasterClient>,
+    tx_buffer: MapCell<SubSliceMut<'static, u8>>,
+    tx_position: Cell<usize>,
+
+    rx_buffer: MapCell<SubSliceMut<'static, u8>>,
+    rx_position: Cell<usize>,
+    len: Cell<usize>,
 }
 
 // const QUEUE_CLIENT: FIFOClient<'static> = FIFOClient::<'_> { wahoo: &0 };
@@ -66,6 +72,13 @@ impl<'a> PioSpi<'a> {
             // wiggle_pin: None::<&'a RPGpioPin<'a>>,
             // interrupt_client: interrupt_client,
             client: OptionalCell::empty(),
+            tx_buffer: MapCell::empty(),
+            tx_position: Cell::new(0),
+
+            rx_buffer: MapCell::empty(),
+            rx_position: Cell::new(0),
+
+            len: Cell::new(0),
         }
     }
 
@@ -239,6 +252,13 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             Option<SubSliceMut<'static, u8>>,
         ),
     > {
+        // TODO
+        // keep track of the new buffers
+        self.tx_buffer.set(write_buffer);
+        if let Some(readbuf) = read_buffer {
+            self.rx_buffer.set(readbuf);
+        }
+
         let mut reading: bool = false;
 
         // let writer = SubSlice::new(write_buffer.borrow().into());
@@ -284,13 +304,15 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
         // map function automatically handles client being none
         // calls the client to notify that read write is done
-        self.client.map(|client| {
-            let ln = write_buffer.len();
 
-            let read_buf_out = if reading { Some(reader) } else { None };
+        // ! commented out because  not actually done
+        // self.client.map(|client| {
+        //     let ln = write_buffer.len();
 
-            client.read_write_done(write_buffer, read_buf_out, Ok(ln));
-        });
+        //     let read_buf_out = if reading { Some(reader) } else { None };
+
+        //     client.read_write_done(write_buffer, read_buf_out, Ok(ln));
+        // });
 
         Ok(())
     }

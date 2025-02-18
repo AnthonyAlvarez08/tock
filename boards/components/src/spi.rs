@@ -150,11 +150,11 @@ impl<S: 'static + spi::SpiMaster<'static>> Component for SpiMuxComponent<S> {
         let mux_spi = static_buffer.write(MuxSpiMaster::new(self.spi));
         kernel::deferred_call::DeferredCallClient::register(mux_spi);
 
-        self.spi.set_client(mux_spi);
+        // self.spi.set_client(mux_spi);
 
-        if let Err(error) = self.spi.init() {
-            panic!("SPI init failed ({:?})", error);
-        }
+        // if let Err(error) = self.spi.init() {
+        //     panic!("SPI init failed ({:?})", error);
+        // }
 
         mux_spi
     }
