@@ -15,8 +15,8 @@ use kernel::hil;
 use kernel::hil::spi::{ClockPhase, ClockPolarity, SpiMaster, SpiMasterClient, SpiMasterDevice};
 
 pub const DRIVER_NUM: usize = driver::NUM::WiFiSpi as usize;
-pub const WIFI_SPI_TX_SIZE: usize = 20;
-pub const WIFI_SPI_RX_SIZE: usize = 20;
+pub const WIFI_SPI_TX_SIZE: usize = 3;
+pub const WIFI_SPI_RX_SIZE: usize = 3;
 
 pub const TX_BUF_LEN: usize = WIFI_SPI_TX_SIZE;
 pub const RX_BUF_LEN: usize = WIFI_SPI_RX_SIZE;
@@ -60,12 +60,18 @@ impl<'a, Spi: SpiMasterDevice<'a>> WiFiSpi<'a, Spi> {
         });
     }
 
-    pub fn start(&self) -> Result<(), ErrorCode> {
-        debug!("[Capsule] starting");
+    pub fn start(
+        &self,
+        writebuf: &'static mut [u8; WIFI_SPI_TX_SIZE],
+        idx: i32,
+    ) -> Result<(), ErrorCode> {
+        debug!("[Capsule] starting {idx}");
 
         // self.out_buffer.put(Some(unsafe { ARR.as_mut_slice() }));
 
         // self.out_buffer.take().map(|buffer| {});
+
+        self.txbuffer.put(SubSliceMut::new(writebuf));
 
         self.txbuffer.take().map(|txbuf| {
             debug!("[Capsule] reading and writing to buffers");

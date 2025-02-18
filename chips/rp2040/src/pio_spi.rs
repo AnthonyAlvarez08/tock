@@ -260,23 +260,23 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
                 write_buffer[writedex]
             );
 
-            debug!("[PIOSPI] called read write byte");
+            // debug!("[PIOSPI] called read write byte");
             let res = self.read_write_byte(write_buffer[writedex]);
-            debug!("[PIOSPI] passed read write byte");
+            // debug!("[PIOSPI] passed read write byte");
 
             if reading {
-                debug!("[PIOSPI] About to commit a read");
+                // debug!("[PIOSPI] About to commit a read");
                 match res {
                     Ok(val) => {
                         // do stuff
                         reader[readdex] = val;
                         readdex += 1;
+                        debug!("[PIOSPI] Passed reading");
                     }
                     Err(error) => {
-                        return Err((error, write_buffer, Some(reader)));
+                        // return Err((error, write_buffer, Some(reader)));
                     }
                 }
-                debug!("[PIOSPI] Passed reading");
             }
 
             writedex += 1;
@@ -336,10 +336,10 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
         // in this example they write 0 out before they're reading
         if !self.pio.sm(self.sm_number).tx_full() {
-            let _ = self.pio.sm(self.sm_number).push_blocking(val as u32);
+            let _ = self.pio.sm(self.sm_number).push(val as u32);
         }
 
-        data = match self.pio.sm(self.sm_number).pull_blocking() {
+        data = match self.pio.sm(self.sm_number).pull() {
             Ok(val) => val,
             Err(error) => {
                 return Err(error);
@@ -382,56 +382,26 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     fn release_low(&self) {}
 }
 
-// TODO: implement PioTxClient
-// TODO: implement PioRxCLient
-
 impl<'a> PioTxClient for PioSpi<'a> {
     fn on_buffer_space_available(&self) {
-        debug!("buffer space available");
+        // TODO: make this keep writing data
+        let pin = RPGpioPin::new(RPGpio::GPIO9);
+        pin.make_output();
+        for i in 0..16 {
+            pin.toggle();
+        }
+        debug!("INSIDE INTERRUPT HANDLER buffer space available\n");
     }
 }
 
 impl<'a> PioRxClient for PioSpi<'a> {
     fn on_data_received(&self, data: u32) {
-        debug!("Received data {data}");
+        // TODO: make this actually record the data
+        let pin = RPGpioPin::new(RPGpio::GPIO9);
+        pin.make_output();
+        for i in 0..16 {
+            pin.toggle();
+        }
+        debug!("INSIDE INTERRUPT HANDLER Received data {data}\n");
     }
 }
-
-// pub struct PioInterruptClient<'a> {
-//     rxbuffer: MapCell<SubSliceMut<'a, u8>>,
-//     txbuffer: MapCell<SubSliceMut<'a, u8>>,
-// }
-
-// impl<'a> PioInterruptClient<'a> {
-//     pub fn new(rxbuffer: &'static mut [u8], txbuffer: &'static mut [u8]) -> Self {
-//         Self {
-//             rxbuffer: MapCell::new(SubSliceMut::new(rxbuffer)),
-//             txbuffer: MapCell::new(SubSliceMut::new(txbuffer)),
-//         }
-//     }
-// }
-
-// impl<'a> PioTxClient for PioInterruptClient<'a> {
-//     fn on_buffer_space_available(&self) {
-//         let pin = RPGpioPin::new(RPGpio::GPIO9);
-//         pin.make_output();
-//         for i in 0..16 {
-//             pin.toggle();
-//         }
-//         debug!("INSIDE INTERRUPT HANDLER buffer space available\n");
-//     }
-// }
-
-// impl<'a> PioRxClient for PioInterruptClient<'a> {
-//     fn on_data_received(&self, data: u32) {
-//         // TODO: put data in the buffer
-//         self.rxbuffer.map(|buf| {});
-
-//         let pin = RPGpioPin::new(RPGpio::GPIO9);
-//         pin.make_output();
-//         for i in 0..16 {
-//             pin.toggle();
-//         }
-//         debug!("INSIDE INTERRUPT HANDLER Received data {data}\n");
-//     }
-// }

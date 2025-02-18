@@ -574,7 +574,7 @@ pub unsafe fn start() -> (
     }
 
     // let pio = static_init!(Pio, Pio::new_pio1());
-    let _pio_spi: &mut PioSpi<'static> = static_init!(
+    let _pio_spi: &'static mut PioSpi<'static> = static_init!(
         PioSpi,
         PioSpi::<'static>::new(
             &peripherals.pio0,
@@ -591,7 +591,7 @@ pub unsafe fn start() -> (
     peripherals.pio0.sm(SMNumber::SM0).set_tx_client(_pio_spi);
 
     // let pio2 = static_init!(Pio, Pio::new_pio1());
-    let _receive_spi: &mut PioSpi<'static> = static_init!(
+    let _receive_spi: &'static mut PioSpi<'static> = static_init!(
         PioSpi,
         PioSpi::<'static>::new(
             &peripherals.pio1,
@@ -668,130 +668,51 @@ pub unsafe fn start() -> (
         }
     }
 
-    let spi_mux = components::spi::SpiMuxComponent::new(&peripherals.spi0)
-        .finalize(components::spi_mux_component_static!(rp2040::spi::Spi));
+    // WIFI chip actual pins
+    // https://github.com/raspberrypi/pico-sdk/blob/master/src/boards/include/boards/pico2_w.h#L124
+    // 29 = clock
+    // 25 = chip select
+    // 24 = both input and output
+    // 23 = power on
+
+    let spi_mux = components::spi::SpiMuxComponent::new(_pio_spi)
+        .finalize(components::spi_mux_component_static!(PioSpi));
 
     let wifi_spi = components::wifi_spi::WiFiSpiComponent::new(
         spi_mux,
-        peripherals.pins.get_pin(RPGpio::GPIO14),
+        peripherals.pins.get_pin(RPGpio::GPIO25),
         board_kernel,
         capsules_extra::wifi_spi::DRIVER_NUM,
     )
     .finalize(components::wifi_spi_component_static!(
         // spi type
-        rp2040::spi::Spi
+        PioSpi
     ));
     _pio_spi.set_client(wifi_spi);
 
-    wifi_spi.start();
-    wifi_spi.print_read();
+    let spi_mux2 = components::spi::SpiMuxComponent::new(_receive_spi)
+        .finalize(components::spi_mux_component_static!(PioSpi));
 
-    // debug!("Trying to write a sentence");
+    let receive_wifi_spi = components::wifi_spi::WiFiSpiComponent::new(
+        spi_mux2,
+        peripherals.pins.get_pin(RPGpio::GPIO25),
+        board_kernel,
+        capsules_extra::wifi_spi::DRIVER_NUM,
+    )
+    .finalize(components::wifi_spi_component_static!(
+        // spi type
+        PioSpi
+    ));
+    _receive_spi.set_client(receive_wifi_spi);
 
-    // put like 4 bytes in a queue, and read
-    // seems to have space for 5 items only
-    // should be read as "Tock OS"
-    // [0x54u8, 0x6fu8, 0x63u8, 0x6bu8, 0x20u8, 0x4fu8, 0x53u8]
-    // 0..20
-    // for i in ['T', 'o', 'c', 'k', ' ', 'O', 'S'] {
-    //     debug!("writing word");
-    //     // _pio_spi.block_until_ready_to_write();
-    //     _pio_spi.write_word(u32::from(i));
-    //     // debug!("finished writing word");
+    // I temporarily made the buffer sizes 3 for the spi capsule
+    static mut outbuf: [u8; 3] = [0xA7u8, 0xB4u8, 0x43u8];
+    let _ = wifi_spi.start(&mut outbuf, 0);
 
-    //     let val = _receive_spi.read_word().unwrap();
-    //     let repr = match char::from_u32(val) {
-    //         Some(x) => x,
-    //         _ => '\t',
-    //     };
-    //     debug!("recv this value: {val}/{repr}");
+    static mut outbuf2: [u8; 3] = [0u8; 3];
+    let _ = receive_wifi_spi.start(&mut outbuf2, 1);
 
-    //     _receive_spi.write_word(val);
-    // }
-
-    // debug!("Trying to write alphabet");
-
-    // put like 4 bytes in a queue, and read
-    // seems to have space for 5 items only
-    // should be read as "ABCDE"
-    //
-    // 0..20
-    // for i in ['A', 'B', 'C', 'D', 'E'] {
-    //     debug!("writing word");
-
-    //     _pio_spi.write_word(u32::from(i));
-    //     // debug!("finished writing word");
-
-    //     let val = _receive_spi.read_word().unwrap();
-    //     let repr = match char::from_u32(val) {
-    //         Some(x) => x,
-    //         _ => '\t',
-    //     };
-    //     debug!("recv this value: {val}/{repr}");
-
-    //     _receive_spi.write_word(val);
-    // }
-
-    // debug!("Trying to write alphabet");
-
-    // put like 4 bytes in a queue, and read
-    // seems to have space for 5 items only
-    // for i in [21, 78, 245, 90, 63] {
-    //     debug!("writing word");
-
-    //     _pio_spi.write_word(i as u32);
-
-    //     let val = _receive_spi.read_word().unwrap();
-    //     debug!("recv this value: {val}");
-
-    //     _receive_spi.write_word(val);
-    // }
-
-    // for _ in 0..10 {
-    //     pin6.toggle(); // wahoo
-    // }
-
-    // static mut out_arr: [u8; 10] = [
-    //     0xFFu8, 0x41u8, 0xA7u8, 0xD3u8, 0xB4u8, 0x75u8, 0x2Fu8, 0xC9u8, 0xD8u8, 0xFFu8,
-    // ];
-
-    // static mut in_arr: [u8; 10] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-
-    // let mut in_buf: TakeCell<'static, [u8]> = TakeCell::empty();
-    // in_buf.put(Some(in_arr.as_mut_slice()));
-
-    // let mut out_buf: TakeCell<'static, [u8]> = TakeCell::empty();
-    // out_buf.put(Some(out_arr.as_mut_slice()));
-    // // let wifi_spi = WiFiSpi::new(_pio_spi, None, out_buf.take().unwrap_or_default());
-
-    // let wifi_spi = WiFiSpi::new(_pio_spi, None, out_buf.take().unwrap_or_default());
-
-    // static mut out_arr2: [u8; 10] = [
-    //     0xFFu8, 0x41u8, 0xA7u8, 0xD3u8, 0xB4u8, 0x75u8, 0x2Fu8, 0xC9u8, 0xD8u8, 0xFFu8,
-    // ];
-
-    // for _ in 0..20 {
-    //     pin6.toggle(); // wahoo
-    // }
-
-    // let mut out_buf2: TakeCell<'static, [u8]> = TakeCell::empty();
-    // out_buf.put(Some(out_arr2.as_mut_slice()));
-
-    // let reader_spi = WiFiSpi::new(
-    //     _receive_spi,
-    //     in_buf.take(),
-    //     out_buf2.take().unwrap_or_default(),
-    // );
-
-    // for _ in 0..30 {
-    //     pin6.toggle(); // wahoo
-    // }
-
-    // let _ = wifi_spi.start();
     // wifi_spi.print_read();
-
-    // let _ = reader_spi.start();
-    // reader_spi.print_read();
 
     for _ in 0..40 {
         // should show 20 peaks
