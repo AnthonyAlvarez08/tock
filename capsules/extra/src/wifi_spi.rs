@@ -15,8 +15,8 @@ use kernel::hil;
 use kernel::hil::spi::{ClockPhase, ClockPolarity, SpiMaster, SpiMasterClient, SpiMasterDevice};
 
 pub const DRIVER_NUM: usize = driver::NUM::WiFiSpi as usize;
-pub const WIFI_SPI_TX_SIZE: usize = 3;
-pub const WIFI_SPI_RX_SIZE: usize = 3;
+pub const WIFI_SPI_TX_SIZE: usize = 8;
+pub const WIFI_SPI_RX_SIZE: usize = 8;
 
 pub const TX_BUF_LEN: usize = WIFI_SPI_TX_SIZE;
 pub const RX_BUF_LEN: usize = WIFI_SPI_RX_SIZE;

@@ -627,7 +627,8 @@ pub unsafe fn start() -> (
     // seems to have space for 5 items only
     // should be read as [167, 212, 81, 177, 114, 246, 197, 113, 227]
     for i in [
-        0xA7u8, 0xB4u8, /*0xD4u8, 0x51u8, 0xB1u8, 0x72u8, 0xF6u8, 0xC5u8, 0x71u8, 0xE3u8,*/
+        0xA7u8, 0xB4u8, 0xC3u8,
+        0xD5u8, /*0xD4u8, 0x51u8, 0xB1u8, 0x72u8, 0xF6u8, 0xC5u8, 0x71u8, 0xE3u8,*/
     ] {
         debug!("writing word");
         for _ in 0..6 {
@@ -690,9 +691,11 @@ pub unsafe fn start() -> (
     ));
     _receive_spi.set_client(wifi_spi);
 
-    // I temporarily made the buffer sizes 3 for the spi capsule
-    static mut outbuf: [u8; 3] = [0xA7u8, 0xB4u8, 0x43u8];
-    _pio_spi.write_word(0xA7);
+    // I temporarily made the buffer sizes 8 for the spi capsule
+    static mut outbuf: [u8; 8] = [
+        0x6Au8, 0xB1u8, 0x43u8, 0xF1u8, 0x42u8, 0xE2u8, 0x79u8, 0x2Cu8,
+    ];
+    // _pio_spi.write_word(0xA7);
     let _ = wifi_spi.start(&mut outbuf, 0);
 
     // wifi_spi.print_read();
