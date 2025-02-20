@@ -630,7 +630,7 @@ pub unsafe fn start() -> (
         0xA7u8, 0xB4u8, 0xC3u8,
         0xD5u8, /*0xD4u8, 0x51u8, 0xB1u8, 0x72u8, 0xF6u8, 0xC5u8, 0x71u8, 0xE3u8,*/
     ] {
-        debug!("writing word");
+        // debug!("writing word");
         for _ in 0..6 {
             // shouw show 3 peaks
             pin6.toggle();
@@ -646,7 +646,7 @@ pub unsafe fn start() -> (
         let val = match _receive_spi.read_word() {
             Ok(data) => data,
             Err(err) => {
-                debug!("receive spi error");
+                // debug!("receive spi error");
                 for _ in 0..30 {
                     // should show 15 peaks
                     pin7.toggle();
@@ -654,7 +654,7 @@ pub unsafe fn start() -> (
                 0
             }
         };
-        debug!("recv this value: {val}");
+        // debug!("recv this value: {val}");
 
         for _ in 0..10 {
             // shoud show 5 peaks

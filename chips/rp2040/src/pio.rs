@@ -1520,7 +1520,7 @@ impl Pio {
             IRQ0_INTS::SM3_TXNFULL,
         ]) {
             if ints.is_set(irq) {
-                debug!("To TX handle full");
+                // debug!("To TX handle full");
                 sm.handle_tx_interrupt();
             }
         }
@@ -1531,7 +1531,7 @@ impl Pio {
             IRQ0_INTS::SM3_RXNEMPTY,
         ]) {
             if ints.is_set(irq) {
-                debug!("To RX handle empty");
+                // debug!("To RX handle empty");
                 sm.handle_rx_interrupt();
             }
         }

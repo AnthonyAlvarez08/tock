@@ -150,53 +150,83 @@ impl<'a> PioSpi<'a> {
 
             let mut keepgoing = true;
             let temp = self.len.get();
-            debug!("Trying to read and write more from buffers");
+            // debug!("Trying to read and write more from buffers");
             debug!("indices in buffers {txcursor} {rxcursor} length {temp}");
 
             while keepgoing {
+                let mut errors = false;
+
                 // try to write one byte
-                match self.read_write_byte(buf[txcursor]) {
-                    Ok(val) => {
-                        let temp = buf[txcursor];
-                        debug!("wrote value {temp}");
-
-                        // if succeed advance
-                        self.tx_position.set(txcursor + 1);
-
-                        // read next byte in
-                        self.rx_buffer.map(|readbuf| {
-                            debug!("Read value {val}");
-
-                            readbuf[rxcursor] = val;
-                            self.rx_position.set(rxcursor + 1);
-                        });
-
-                        // if done, then reset and call client
-                        if self.tx_position.get() >= self.len.get() {
-                            // should maybe not set it to free if it is writing
-                            self.state.set(PioSpiState::Free);
-                            self.len.set(0);
-                            self.tx_position.set(0);
-                            self.rx_position.set(0);
-
-                            // transfer ownership to client
-                            if let Some(tx_buffer) = self.tx_buffer.take() {
-                                self.client.map(|client| {
-                                    client.read_write_done(
-                                        tx_buffer,
-                                        self.rx_buffer.take(),
-                                        Ok(0 as usize),
-                                    );
-                                });
-                                return;
-                            }
+                if self.tx_position.get() < temp {
+                    match self.write_byte(buf[self.tx_position.get()]) {
+                        Err(error) => errors = true,
+                        _ => {
+                            self.tx_position.set(self.tx_position.get() + 1);
                         }
                     }
-                    Err(error) => {
-                        // ???????
-                        keepgoing = false;
+                }
+
+                // try to read one byte
+                if self.rx_position.get() < temp {
+                    match self.read_byte() {
+                        Ok(val) => {
+                            self.rx_buffer.map(|readbuf| {
+                                // debug!("Read value {val}");
+                                readbuf[self.rx_position.get()] = val;
+                                self.rx_position.set(self.rx_position.get() + 1);
+                            });
+                        }
+                        _ => errors = true,
+                    }
+                }
+
+                // if done, then reset and call client
+                if self.tx_position.get() >= self.len.get()
+                    && self.rx_position.get() >= self.len.get()
+                {
+                    // printing tx contents
+                    let mut idx = 0;
+                    debug!("Printing TX Buffer");
+                    while idx < buf.len() {
+                        let temp = buf[idx];
+                        debug!("[TX buf] {temp}");
+                        idx += 1;
+                    }
+
+                    // printing rx contents
+                    debug!("Printing RX Buffer");
+                    self.rx_buffer.map(|buf| {
+                        let mut idx = 0;
+                        while idx < buf.len() {
+                            let temp = buf[idx];
+                            debug!("[RX buf] {temp}");
+                            idx += 1;
+                        }
+                    });
+
+                    // should maybe not set it to free if it is writing
+                    self.state.set(PioSpiState::Free);
+                    self.len.set(0);
+                    self.tx_position.set(0);
+                    self.rx_position.set(0);
+
+                    debug!("Transferring ownership");
+                    // transfer ownership to client
+                    if let Some(tx_buffer) = self.tx_buffer.take() {
+                        self.client.map(|client| {
+                            client.read_write_done(
+                                tx_buffer,
+                                self.rx_buffer.take(),
+                                Ok(0 as usize),
+                            );
+                        });
                         return;
                     }
+                    keepgoing = false;
+                }
+
+                if errors {
+                    keepgoing = false;
                 }
             }
         });
@@ -341,27 +371,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             debug!("will read");
         }
 
-        let mut keepgoing = true;
-
-        while keepgoing {
-            self.tx_buffer.map(|buf| {
-                // try to read and write one byte to trigger interrupts
-                let res = self.read_write_byte(buf[self.tx_position.get()]);
-                match res {
-                    Ok(data) => {
-                        self.rx_buffer.map(|buf| {
-                            buf[self.rx_position.get()] = data;
-                        });
-                        self.rx_position.set(self.rx_position.get() + 1);
-                        self.tx_position.set(self.tx_position.get() + 1);
-                    }
-                    Err(err) => {
-                        // expected but keep going
-                        keepgoing = false;
-                    }
-                }
-            });
-        }
+        self.read_write_buffers();
 
         Ok(())
     }
@@ -369,16 +379,19 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
         // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
         // in this example they reading and dumping after they're writing
-        self.pio.sm(self.sm_number).push_blocking(val as u32);
-
-        if !self.pio.sm(self.sm_number).rx_empty() {
-            match self.pio.sm(self.sm_number).pull_blocking() {
-                Ok(val) => {}
-                Err(err) => {}
-            }
+        match self.pio.sm(self.sm_number).push(val as u32) {
+            Err(error) => return Err(error),
+            _ => Ok(()),
         }
 
-        Ok(())
+        // if !self.pio.sm(self.sm_number).rx_empty() {
+        //     match self.pio.sm(self.sm_number).pull_blocking() {
+        //         Ok(val) => {}
+        //         Err(err) => {}
+        //     }
+        // }
+
+        // Ok(())
     }
 
     fn read_byte(&self) -> Result<u8, ErrorCode> {
@@ -386,11 +399,11 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
         // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
         // in this example they write 0 out before they're reading
-        if !self.pio.sm(self.sm_number).tx_full() {
-            self.pio.sm(self.sm_number).push_blocking(0);
-        }
+        // if !self.pio.sm(self.sm_number).tx_full() {
+        //     self.pio.sm(self.sm_number).push(0);
+        // }
 
-        data = match self.pio.sm(self.sm_number).pull_blocking() {
+        data = match self.pio.sm(self.sm_number).pull() {
             Ok(val) => val,
             Err(error) => {
                 return Err(error);
@@ -461,56 +474,15 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 impl<'a> PioTxClient for PioSpi<'a> {
     fn on_buffer_space_available(&self) {
         // TODO: make this keep writing data
-        debug!("INSIDE INTERRUPT HANDLER buffer space available\n");
+        // debug!("INSIDE INTERRUPT HANDLER buffer space available\n");
 
+        // increment the tx index
+        self.tx_position.set(self.tx_position.get() + 1);
         match self.state.get() {
             // if currently writing try to write the next byte
             PioSpiState::Writing | PioSpiState::ReadingWriting => {
-                debug!("trying to write more");
-
+                // debug!("trying to write more");
                 self.read_write_buffers();
-
-                // write one byte
-                // self.tx_buffer.map(|buf| {
-                //     let cursor = self.tx_position.get();
-
-                //     let mut keepgoing = false;
-
-                //     while keepgoing {
-                //         // try to write one byte
-                //         match self.write_byte(buf[cursor]) {
-                //             Ok(()) => {
-                //                 debug!("wrtone one more");
-
-                //                 // if succeed advance
-                //                 self.tx_position.set(cursor + 1);
-
-                //                 // if done, then reset and call client
-                //                 if self.tx_position.get() == self.len.get() {
-                //                     // should maybe not set it to free if it is writing
-                //                     self.state.set(PioSpiState::Free);
-                //                     self.len.set(0);
-                //                     self.tx_position.set(0);
-
-                //                     // transfer ownership to client
-                //                     if let Some(tx_buffer) = self.tx_buffer.take() {
-                //                         self.client.map(|client| {
-                //                             client.read_write_done(
-                //                                 tx_buffer,
-                //                                 self.rx_buffer.take(),
-                //                                 Ok(0 as usize),
-                //                             );
-                //                         });
-                //                     }
-                //                 }
-                //             }
-                //             Err(error) => {
-                //                 // ???????
-                //                 keepgoing = false;
-                //             }
-                //         }
-                //     }
-                // });
             }
             _ => {}
         }
@@ -533,49 +505,17 @@ impl<'a> PioRxClient for PioSpi<'a> {
         }
         debug!("INSIDE INTERRUPT HANDLER Received data {data}\n");
 
+        // add to rx buffer and update the rx index
+        self.rx_buffer.map(|buf| {
+            buf[self.rx_position.get()] = data as u8;
+            self.rx_position.set(self.rx_position.get() + 1);
+        });
+
         match self.state.get() {
             // if currently writing try to write the next byte
             PioSpiState::Reading | PioSpiState::ReadingWriting => {
-                debug!("trying to read more more");
-
+                // debug!("trying to read more more");
                 self.read_write_buffers();
-
-                // write one byte
-                // self.rx_buffer.map(|buf| {
-                //     let rxcursor = self.rx_position.get();
-
-                //     // attempt to read a byte
-                //     match self.read_byte() {
-                //         Ok(data) => {
-                //             // insert it into the buffer
-                //             debug!("read one more");
-                //             buf[rxcursor] = data;
-                //             self.rx_position.set(rxcursor + 1);
-
-                //             // if buffer is full then call client for read write done
-                //             if self.rx_position.get() == self.len.get() {
-                //                 // should maybe not set it to free if it is reading
-                //                 self.state.set(PioSpiState::Free);
-                //                 self.len.set(0);
-                //                 self.rx_position.set(0);
-
-                //                 // I think it is fair to transfer ownership to client?
-                //                 if let Some(tx_buffer) = self.tx_buffer.take() {
-                //                     self.client.map(|client| {
-                //                         client.read_write_done(
-                //                             tx_buffer,
-                //                             self.rx_buffer.take(),
-                //                             Ok(0 as usize),
-                //                         );
-                //                     });
-                //                 }
-                //             }
-                //         }
-                //         Err(error) => {
-                //             // ???????
-                //         }
-                //     }
-                // });
             }
             _ => {}
         }
