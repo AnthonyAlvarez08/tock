@@ -626,48 +626,48 @@ pub unsafe fn start() -> (
     // put like 4 bytes in a queue, and read
     // seems to have space for 5 items only
     // should be read as [167, 212, 81, 177, 114, 246, 197, 113, 227]
-    for i in [
-        0xA7u8, 0xB4u8, 0xC3u8,
-        0xD5u8, /*0xD4u8, 0x51u8, 0xB1u8, 0x72u8, 0xF6u8, 0xC5u8, 0x71u8, 0xE3u8,*/
-    ] {
-        // debug!("writing word");
-        for _ in 0..6 {
-            // shouw show 3 peaks
-            pin6.toggle();
-        }
-        // _pio_spi.block_until_ready_to_write();
-        _pio_spi.write_word(i as u32);
-        // debug!("finished writing word");
+    // for i in [
+    //     0xA7u8, 0xB4u8, 0xC3u8,
+    //     0xD5u8, /*0xD4u8, 0x51u8, 0xB1u8, 0x72u8, 0xF6u8, 0xC5u8, 0x71u8, 0xE3u8,*/
+    // ] {
+    //     // debug!("writing word");
+    //     for _ in 0..6 {
+    //         // shouw show 3 peaks
+    //         pin6.toggle();
+    //     }
+    //     // _pio_spi.block_until_ready_to_write();
+    //     _pio_spi.write_word(i as u32);
+    //     // debug!("finished writing word");
 
-        for _ in 0..6 {
-            pin7.toggle();
-        }
+    //     for _ in 0..6 {
+    //         pin7.toggle();
+    //     }
 
-        let val = match _receive_spi.read_word() {
-            Ok(data) => data,
-            Err(err) => {
-                // debug!("receive spi error");
-                for _ in 0..30 {
-                    // should show 15 peaks
-                    pin7.toggle();
-                }
-                0
-            }
-        };
-        // debug!("recv this value: {val}");
+    //     let val = match _receive_spi.read_word() {
+    //         Ok(data) => data,
+    //         Err(err) => {
+    //             // debug!("receive spi error");
+    //             for _ in 0..30 {
+    //                 // should show 15 peaks
+    //                 pin7.toggle();
+    //             }
+    //             0
+    //         }
+    //     };
+    //     // debug!("recv this value: {val}");
 
-        for _ in 0..10 {
-            // shoud show 5 peaks
-            pin6.toggle();
-        }
+    //     for _ in 0..10 {
+    //         // shoud show 5 peaks
+    //         pin6.toggle();
+    //     }
 
-        let _ = _receive_spi.write_word(val);
+    //     let _ = _receive_spi.write_word(val);
 
-        for _ in 0..10 {
-            // should show 5 peaks
-            pin7.toggle();
-        }
-    }
+    //     for _ in 0..10 {
+    //         // should show 5 peaks
+    //         pin7.toggle();
+    //     }
+    // }
 
     // WIFI chip actual pins
     // https://github.com/raspberrypi/pico-sdk/blob/master/src/boards/include/boards/pico2_w.h#L124
@@ -691,12 +691,29 @@ pub unsafe fn start() -> (
     ));
     _receive_spi.set_client(wifi_spi);
 
+    let spi_mux2 = components::spi::SpiMuxComponent::new(_pio_spi)
+        .finalize(components::spi_mux_component_static!(PioSpi));
+
+    let wifi_spi2 = components::wifi_spi::WiFiSpiComponent::new(
+        spi_mux2,
+        peripherals.pins.get_pin(RPGpio::GPIO25),
+        board_kernel,
+        capsules_extra::wifi_spi::DRIVER_NUM,
+    )
+    .finalize(components::wifi_spi_component_static!(
+        // spi type
+        PioSpi
+    ));
+    _pio_spi.set_client(wifi_spi2);
+
     // I temporarily made the buffer sizes 8 for the spi capsule
     static mut outbuf: [u8; 8] = [
         0x6Au8, 0xB1u8, 0x43u8, 0xF1u8, 0x42u8, 0xE2u8, 0x79u8, 0x2Cu8,
     ];
     // _pio_spi.write_word(0xA7);
     let _ = wifi_spi.start(&mut outbuf, 0);
+
+    let _ = wifi_spi2.start(&mut outbuf, 0);
 
     // wifi_spi.print_read();
 

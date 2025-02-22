@@ -1242,7 +1242,7 @@ impl StateMachine {
                         self.registers.rxf[self.sm_number as usize].read(RXFx::RXF),
                     );
                 });
-                debug!("Interrupt handled");
+                // debug!("Interrupt handled");
             }
             StateMachineState::Ready => {}
         }

@@ -151,7 +151,7 @@ impl<'a> PioSpi<'a> {
             let mut keepgoing = true;
             let temp = self.len.get();
             // debug!("Trying to read and write more from buffers");
-            debug!("indices in buffers {txcursor} {rxcursor} length {temp}");
+            // debug!("indices in buffers {txcursor} {rxcursor} length {temp}");
 
             while keepgoing {
                 let mut errors = false;
@@ -186,10 +186,10 @@ impl<'a> PioSpi<'a> {
                 {
                     // printing tx contents
                     let mut idx = 0;
-                    debug!("Printing TX Buffer");
+                    // debug!("Printing TX Buffer");
                     while idx < buf.len() {
                         let temp = buf[idx];
-                        debug!("[TX buf] {temp}");
+                        // debug!("[TX buf] {temp}");
                         idx += 1;
                     }
 
@@ -503,7 +503,7 @@ impl<'a> PioRxClient for PioSpi<'a> {
         for i in 0..16 {
             pin.toggle();
         }
-        debug!("INSIDE INTERRUPT HANDLER Received data {data}\n");
+        debug!("INSIDE INTERRUPT HANDLER Received data {data}");
 
         // add to rx buffer and update the rx index
         self.rx_buffer.map(|buf| {
