@@ -148,12 +148,13 @@ impl<'a> PioSpi<'a> {
             let txcursor = self.tx_position.get();
             let rxcursor = self.rx_position.get();
 
-            let mut keepgoing = true;
+            // let mut keepgoing = true;
             let temp = self.len.get();
             // debug!("Trying to read and write more from buffers");
             // debug!("indices in buffers {txcursor} {rxcursor} length {temp}");
 
-            while keepgoing {
+            for i in 0..4 {
+                // only 4 words fit in a FIFO anyway
                 let mut errors = false;
 
                 // try to write one byte
@@ -222,11 +223,11 @@ impl<'a> PioSpi<'a> {
                         });
                         return;
                     }
-                    keepgoing = false;
+                    break;
                 }
 
                 if errors {
-                    keepgoing = false;
+                    break;
                 }
             }
         });
@@ -381,17 +382,17 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         // in this example they reading and dumping after they're writing
         match self.pio.sm(self.sm_number).push(val as u32) {
             Err(error) => return Err(error),
-            _ => Ok(()),
+            _ => {}
         }
 
-        // if !self.pio.sm(self.sm_number).rx_empty() {
-        //     match self.pio.sm(self.sm_number).pull_blocking() {
-        //         Ok(val) => {}
-        //         Err(err) => {}
-        //     }
-        // }
+        if !self.pio.sm(self.sm_number).rx_empty() {
+            match self.pio.sm(self.sm_number).pull() {
+                Ok(val) => {}
+                Err(err) => {}
+            }
+        }
 
-        // Ok(())
+        Ok(())
     }
 
     fn read_byte(&self) -> Result<u8, ErrorCode> {
@@ -399,9 +400,9 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
         // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
         // in this example they write 0 out before they're reading
-        // if !self.pio.sm(self.sm_number).tx_full() {
-        //     self.pio.sm(self.sm_number).push(0);
-        // }
+        if !self.pio.sm(self.sm_number).tx_full() {
+            self.pio.sm(self.sm_number).push(0);
+        }
 
         data = match self.pio.sm(self.sm_number).pull() {
             Ok(val) => val,
