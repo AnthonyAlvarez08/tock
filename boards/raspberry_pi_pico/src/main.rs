@@ -25,19 +25,19 @@ use components::wifi_spi::WiFiSpiComponent;
 use enum_primitive::cast::FromPrimitive;
 use kernel::component::Component;
 use kernel::debug;
+use kernel::deferred_call::{DeferredCall, DeferredCallClient};
+use kernel::hil::gpio::Output;
 use kernel::hil::gpio::{Configure, FloatingState};
 use kernel::hil::i2c::I2CMaster;
 use kernel::hil::led::LedHigh;
+use kernel::hil::pwm::Pwm;
+use kernel::hil::spi::SpiMaster;
 use kernel::hil::usb::Client;
 use kernel::platform::{KernelResources, SyscallDriverLookup};
 use kernel::scheduler::round_robin::RoundRobinSched;
 use kernel::syscall::SyscallDriver;
 use kernel::utilities::cells::TakeCell;
 use kernel::{capabilities, create_capability, static_init, Kernel};
-
-use kernel::hil::gpio::Output;
-use kernel::hil::pwm::Pwm;
-use kernel::hil::spi::SpiMaster;
 use rp2040::adc::{Adc, Channel};
 use rp2040::chip::{Rp2040, Rp2040DefaultPeripherals};
 use rp2040::clocks::Clocks;
@@ -616,6 +616,8 @@ pub unsafe fn start() -> (
     // // debug!("Attempting to initialize PIO");
     let _ = _pio_spi.init();
     let _ = _receive_spi.init();
+    _pio_spi.register();
+    _receive_spi.register();
 
     _receive_spi.clear_fifos();
     _pio_spi.clear_fifos();
@@ -689,6 +691,7 @@ pub unsafe fn start() -> (
         // spi type
         PioSpi
     ));
+    wifi_spi.register();
     _receive_spi.set_client(wifi_spi);
 
     let spi_mux2 = components::spi::SpiMuxComponent::new(_pio_spi)
@@ -704,6 +707,7 @@ pub unsafe fn start() -> (
         // spi type
         PioSpi
     ));
+    wifi_spi2.register();
     _pio_spi.set_client(wifi_spi2);
 
     // I temporarily made the buffer sizes 8 for the spi capsule

@@ -10,6 +10,7 @@ use kernel::{ErrorCode, ProcessId};
 
 use capsules_core::driver;
 use capsules_core::virtualizers::virtual_spi::MuxSpiMaster;
+use kernel::deferred_call::{DeferredCall, DeferredCallClient};
 use kernel::grant::{AllowRoCount, AllowRwCount, Grant, UpcallCount};
 use kernel::hil;
 use kernel::hil::spi::{ClockPhase, ClockPolarity, SpiMaster, SpiMasterClient, SpiMasterDevice};
@@ -26,6 +27,7 @@ pub struct WiFiSpi<'a, Spi: SpiMasterDevice<'a>> {
     rxbuffer: MapCell<SubSliceMut<'static, u8>>,
     txbuffer: MapCell<SubSliceMut<'static, u8>>,
     grants: Grant<App, UpcallCount<1>, AllowRoCount<0>, AllowRwCount<0>>,
+    deferred_call: DeferredCall,
 }
 
 #[derive(Default)]
@@ -44,6 +46,7 @@ impl<'a, Spi: SpiMasterDevice<'a>> WiFiSpi<'a, Spi> {
             spi_master: spi_master,
             state: Cell::new(State::Suspend),
             grants: grants,
+            deferred_call: DeferredCall::new(),
         }
     }
 
@@ -123,22 +126,21 @@ impl<'a, Spi: SpiMasterDevice<'a>> SpiMasterClient for WiFiSpi<'a, Spi> {
         self.txbuffer.replace(write_buffer);
         if let Some(buf) = read_buffer {
             self.rxbuffer.replace(buf);
+            debug!("[Capsule client] current read buffer");
+            self.rxbuffer.map(|buf| {
+                let mut idx: usize = 0;
+
+                while idx < buf.len() {
+                    let temp = buf[idx];
+                    debug!("[Capsule Client] {temp}");
+                    idx += 1;
+                }
+            });
         }
 
         debug!("[Capsule client] current write buffer");
         self.txbuffer.map(|buf| {
             let mut idx: usize = 0;
-            while idx < buf.len() {
-                let temp = buf[idx];
-                debug!("[Capsule Client] {temp}");
-                idx += 1;
-            }
-        });
-
-        debug!("[Capsule client] current read buffer");
-        self.rxbuffer.map(|buf| {
-            let mut idx: usize = 0;
-
             while idx < buf.len() {
                 let temp = buf[idx];
                 debug!("[Capsule Client] {temp}");
@@ -177,5 +179,15 @@ impl<'a, Spi: SpiMasterDevice<'a>> SyscallDriver for WiFiSpi<'a, Spi> {
     fn allocate_grant(&self, processid: ProcessId) -> Result<(), kernel::process::Error> {
         self.grants.enter(processid, |_, _| {})
         // Ok(())
+    }
+}
+
+impl<'a, Spi: SpiMasterDevice<'a>> DeferredCallClient for WiFiSpi<'a, Spi> {
+    fn handle_deferred_call(&self) {
+        // Your action here
+    }
+
+    fn register(&'static self) {
+        self.deferred_call.register(self);
     }
 }

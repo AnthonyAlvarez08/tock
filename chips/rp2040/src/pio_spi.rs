@@ -6,13 +6,12 @@
 //         Anthony Alvarez <anthonyalvarez2026@u.northwestern.edu>
 
 //! Programmable Input Output (PIO) hardware test file.
-use core::borrow::Borrow;
-
 use crate::clocks::{self};
-use crate::gpio::{GpioFunction, RPGpio, RPGpioPin};
+use crate::gpio::{RPGpio, RPGpioPin};
 use crate::pio::{PIONumber, Pio, PioRxClient, PioTxClient, SMNumber, StateMachineConfiguration};
 use core::cell::Cell;
 use kernel::debug;
+use kernel::deferred_call::{DeferredCall, DeferredCallClient};
 use kernel::hil::gpio::{Configure, Output};
 use kernel::hil::spi::cs::ChipSelectPolar;
 use kernel::hil::spi::SpiMaster;
@@ -20,14 +19,12 @@ use kernel::hil::spi::SpiMasterClient;
 use kernel::hil::spi::{ClockPhase, ClockPolarity};
 use kernel::utilities::cells::MapCell;
 use kernel::utilities::cells::OptionalCell;
-use kernel::utilities::leasable_buffer::{SubSlice, SubSliceMut};
-use kernel::utilities::registers::interfaces::{ReadWriteable, Readable, Writeable};
-use kernel::utilities::registers::{register_bitfields, register_structs, ReadOnly, ReadWrite};
-use kernel::utilities::StaticRef;
+use kernel::utilities::leasable_buffer::SubSliceMut;
 use kernel::{hil, ErrorCode};
 
-// TODO: figure out the whole rx/tx client thing
-// TODO: make it hold on to a spi master client
+// since auto push / pull is set to 8 for the purposes of writing in bytes rather than words
+// values read in have to be bitshifted by 24
+const AUTOPULL_SHIFT: usize = 24;
 
 pub struct PioSpi<'a> {
     clocks: &'a clocks::Clocks,
@@ -37,16 +34,14 @@ pub struct PioSpi<'a> {
     in_pin: u32,
     sm_number: SMNumber,
     pio_number: PIONumber,
-    // wiggle_pin: Option<&'a RPGpioPin<'a>>,
-    // interrupt_client: &'static PioInterruptClient<'static>,
     client: OptionalCell<&'a dyn SpiMasterClient>,
     tx_buffer: MapCell<SubSliceMut<'static, u8>>,
     tx_position: Cell<usize>,
-
     rx_buffer: MapCell<SubSliceMut<'static, u8>>,
     rx_position: Cell<usize>,
     len: Cell<usize>,
     state: Cell<PioSpiState>,
+    deferred_call: DeferredCall,
 }
 #[repr(u8)]
 #[derive(Clone, Copy)]
@@ -57,8 +52,6 @@ pub enum PioSpiState {
     ReadingWriting = 0b11,
 }
 
-// const QUEUE_CLIENT: FIFOClient<'static> = FIFOClient::<'_> { wahoo: &0 };
-
 impl<'a> PioSpi<'a> {
     pub fn new(
         pio: &'a Pio,
@@ -68,33 +61,25 @@ impl<'a> PioSpi<'a> {
         out_pin: u32,
         sm_number: SMNumber,
         pio_number: PIONumber,
-        // interrupt_client: &'static PioInterruptClient<'static>,
     ) -> Self {
         Self {
             clocks,
-            pio: pio, //TakeCell::new(pio),
+            pio: pio,
             side_set_pin: side_set_pin,
             in_pin: in_pin,
             out_pin: out_pin,
             sm_number: sm_number,
             pio_number: pio_number,
-            // wiggle_pin: None::<&'a RPGpioPin<'a>>,
-            // interrupt_client: interrupt_client,
             client: OptionalCell::empty(),
             tx_buffer: MapCell::empty(),
             tx_position: Cell::new(0),
-
             rx_buffer: MapCell::empty(),
             rx_position: Cell::new(0),
-
             len: Cell::new(0),
             state: Cell::new(PioSpiState::Free),
+            deferred_call: DeferredCall::new(),
         }
     }
-
-    // pub fn set_wiggle_pin(&mut self, pin: &'a RPGpioPin<'a>) {
-    //     self.wiggle_pin.insert(pin);
-    // }
 
     pub fn block_until_empty(&self) {
         while !self.pio.sm(self.sm_number).rx_empty() || !self.pio.sm(self.sm_number).tx_empty() {
@@ -112,7 +97,7 @@ impl<'a> PioSpi<'a> {
     }
 
     pub fn read_word(&self) -> Result<u32, ErrorCode> {
-        let mut data: u32;
+        let mut data: u32 = 0;
 
         // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
         // in this example they write 0 out before they're reading
@@ -159,7 +144,11 @@ impl<'a> PioSpi<'a> {
 
                 // try to write one byte
                 if self.tx_position.get() < temp {
-                    match self.write_byte(buf[self.tx_position.get()]) {
+                    let res = self
+                        .pio
+                        .sm(self.sm_number)
+                        .push(buf[self.tx_position.get()] as u32);
+                    match res {
                         Err(error) => errors = true,
                         _ => {
                             self.tx_position.set(self.tx_position.get() + 1);
@@ -169,11 +158,15 @@ impl<'a> PioSpi<'a> {
 
                 // try to read one byte
                 if self.rx_position.get() < temp {
-                    match self.read_byte() {
+                    let data = self.pio.sm(self.sm_number).pull();
+                    match data {
                         Ok(val) => {
+                            // this branch basically never gets called because there is likely nothing new in the buffer
+                            // leave it here just in case
+
                             self.rx_buffer.map(|readbuf| {
                                 // debug!("Read value {val}");
-                                readbuf[self.rx_position.get()] = val;
+                                readbuf[self.rx_position.get()] = (val >> AUTOPULL_SHIFT) as u8;
                                 self.rx_position.set(self.rx_position.get() + 1);
                             });
                         }
@@ -186,13 +179,13 @@ impl<'a> PioSpi<'a> {
                     && self.rx_position.get() >= self.len.get()
                 {
                     // printing tx contents
-                    let mut idx = 0;
+                    // let mut idx = 0;
                     // debug!("Printing TX Buffer");
-                    while idx < buf.len() {
-                        let temp = buf[idx];
-                        // debug!("[TX buf] {temp}");
-                        idx += 1;
-                    }
+                    // while idx < buf.len() {
+                    //     let temp = buf[idx];
+                    // debug!("[TX buf] {temp}");
+                    //     idx += 1;
+                    // }
 
                     // printing rx contents
                     debug!("Printing RX Buffer");
@@ -211,18 +204,20 @@ impl<'a> PioSpi<'a> {
                     self.tx_position.set(0);
                     self.rx_position.set(0);
 
-                    debug!("Transferring ownership");
-                    // transfer ownership to client
-                    if let Some(tx_buffer) = self.tx_buffer.take() {
-                        self.client.map(|client| {
-                            client.read_write_done(
-                                tx_buffer,
-                                self.rx_buffer.take(),
-                                Ok(0 as usize),
-                            );
-                        });
-                        return;
-                    }
+                    self.deferred_call.set();
+
+                    // the following is now in the deferred call
+                    // debug!("Transferring ownership");
+                    // // transfer ownership to client
+                    // if let Some(tx_buffer) = self.tx_buffer.take() {
+                    //     self.client.map(|client| {
+                    //         client.read_write_done(
+                    //             tx_buffer,
+                    //             self.rx_buffer.take(),
+                    //             Ok(0 as usize),
+                    //         );
+                    //     });
+                    // }
                     break;
                 }
 
@@ -243,7 +238,6 @@ impl<'a> PioSpi<'a> {
 }
 
 impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
-    // I just copied this from spi.rs in the same folder
     type ChipSelect = ChipSelectPolar<'a, crate::gpio::RPGpioPin<'a>>;
 
     fn init(&self) -> Result<(), ErrorCode> {
@@ -303,8 +297,8 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         // custom_config.div_frac = 64; // is 64/256 = 1/4
 
         // should be able to work on bytes according to the PIO manual
-        // custom_config.in_push_threshold = 8;
-        // custom_config.out_pull_threshold = 8;
+        custom_config.in_push_threshold = 8;
+        custom_config.out_pull_threshold = 8;
 
         custom_config.side_set_base = self.side_set_pin;
         custom_config.in_pins_base = self.in_pin;
@@ -320,14 +314,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             self.out_pin,
             &custom_config,
         );
-
-        // subscribe to the interrupts I guess?
-        // self.pio
-        //     .sm(self.sm_number)
-        //     .set_tx_client(self.interrupt_client);
-        // self.pio
-        //     .sm(self.sm_number)
-        //     .set_rx_client(self.interrupt_client);
 
         Ok(())
     }
@@ -411,6 +397,8 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             }
         };
 
+        data = data >> AUTOPULL_SHIFT;
+
         Ok(data as u8)
     }
 
@@ -435,6 +423,8 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
                 return Err(error);
             }
         };
+
+        data = data >> AUTOPULL_SHIFT;
 
         Ok(data as u8)
     }
@@ -504,13 +494,16 @@ impl<'a> PioRxClient for PioSpi<'a> {
         for i in 0..16 {
             pin.toggle();
         }
+        let data = data >> AUTOPULL_SHIFT;
         debug!("INSIDE INTERRUPT HANDLER Received data {data}");
 
         // add to rx buffer and update the rx index
-        self.rx_buffer.map(|buf| {
-            buf[self.rx_position.get()] = data as u8;
-            self.rx_position.set(self.rx_position.get() + 1);
-        });
+        if self.len.get() > self.rx_position.get() {
+            self.rx_buffer.map(|buf| {
+                buf[self.rx_position.get()] = data as u8;
+                self.rx_position.set(self.rx_position.get() + 1);
+            });
+        }
 
         match self.state.get() {
             // if currently writing try to write the next byte
@@ -520,5 +513,24 @@ impl<'a> PioRxClient for PioSpi<'a> {
             }
             _ => {}
         }
+    }
+}
+
+impl<'a> DeferredCallClient for PioSpi<'a> {
+    fn handle_deferred_call(&self) {
+        // Your action here
+
+        debug!("Transferring ownership");
+        debug!("Calling client in deferred call");
+        // transfer ownership to client
+        if let Some(tx_buffer) = self.tx_buffer.take() {
+            self.client.map(|client| {
+                client.read_write_done(tx_buffer, self.rx_buffer.take(), Ok(0 as usize));
+            });
+        }
+    }
+
+    fn register(&'static self) {
+        self.deferred_call.register(self);
     }
 }
