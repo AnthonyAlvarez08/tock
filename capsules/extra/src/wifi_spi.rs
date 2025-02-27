@@ -96,8 +96,8 @@ impl<'a, Spi: SpiMasterDevice<'a>> WiFiSpi<'a, Spi> {
     pub fn configure(&self) -> Result<(), ErrorCode> {
         self.spi_master.configure(
             ClockPolarity::IdleHigh,
-            ClockPhase::SampleTrailing,
-            1_000_000,
+            ClockPhase::SampleLeading,
+            5_000_000,
         )
     }
 }

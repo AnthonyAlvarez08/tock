@@ -588,10 +588,6 @@ pub unsafe fn start() -> (
         )
     );
 
-    for _ in 0..20 {
-        pin6.toggle();
-    }
-
     // make the pio subscribe to interrupts
     peripherals.pio0.sm(SMNumber::SM0).set_rx_client(_pio_spi);
     peripherals.pio0.sm(SMNumber::SM0).set_tx_client(_pio_spi);
@@ -611,10 +607,6 @@ pub unsafe fn start() -> (
         )
     );
 
-    for _ in 0..20 {
-        pin7.toggle();
-    }
-
     // make the pio subscribe to interrupts
     peripherals
         .pio1
@@ -628,15 +620,7 @@ pub unsafe fn start() -> (
     // // debug!("Attempting to initialize PIO");
     let _ = _pio_spi.init();
 
-    for _ in 0..20 {
-        pin8.toggle();
-    }
-
     let _ = _receive_spi.init();
-
-    for _ in 0..20 {
-        pin9.toggle();
-    }
 
     _pio_spi.register();
     _receive_spi.register();
@@ -716,10 +700,6 @@ pub unsafe fn start() -> (
     wifi_spi.register();
     _receive_spi.set_client(wifi_spi);
 
-    for _ in 0..20 {
-        pin6.toggle();
-    }
-
     let spi_mux2 = components::spi::SpiMuxComponent::new(_pio_spi)
         .finalize(components::spi_mux_component_static!(PioSpi));
 
@@ -735,9 +715,6 @@ pub unsafe fn start() -> (
     ));
     wifi_spi2.register();
     _pio_spi.set_client(wifi_spi2);
-    for _ in 0..20 {
-        pin7.toggle();
-    }
 
     // I temporarily made the buffer sizes 8 for the spi capsule
     static mut outbuf: [u8; 8] = [

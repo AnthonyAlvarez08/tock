@@ -98,8 +98,8 @@ impl<'a> PioSpi<'a> {
             len: Cell::new(0),
             state: Cell::new(PioSpiState::Free),
             deferred_call: DeferredCall::new(),
-            clock_div_int: Cell::new(31u32), // defaults to 1 MHz
-            clock_div_frac: Cell::new(64u32),
+            clock_div_int: Cell::new(125u32), // defaults to 1 MHz
+            clock_div_frac: Cell::new(0u32),
             clock_phase: Cell::new(clock_phase),
         }
     }
@@ -288,35 +288,30 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             0x4001, /* 2: in     pins, 1         side 0 */
         ];
 
-        let _ = self.pio.add_program16(None::<usize>, &SPI_CPHA0);
-
-        // let mut program_load_res;
-
-        // match self.clock_phase.get() {
-        //     ClockPhase::SampleLeading => {
-        //         program_load_res = self.pio.add_program16(None::<usize>, &SPI_CPHA0);
-        //     }
-        //     ClockPhase::SampleTrailing => {
-        //         program_load_res = self.pio.add_program16(None::<usize>, &SPI_CPHA1);
-        //         custom_config.wrap = 2;
-        //         debug!("trailing");
-        //     }
-        // }
-
-        // match program_load_res {
-        //     Err(error) => return Err(ErrorCode::FAIL),
-        //     _ => {}
-        // }
-
         self.pio.init();
+        // let _ = self.pio.add_program16(None::<usize>, &SPI_CPHA0);
+
+        let mut wrap = 1;
+
+        let mut program_load_res;
+
+        match self.clock_phase.get() {
+            ClockPhase::SampleLeading => {
+                program_load_res = self.pio.add_program16(None::<usize>, &SPI_CPHA0);
+            }
+            ClockPhase::SampleTrailing => {
+                program_load_res = self.pio.add_program16(None::<usize>, &SPI_CPHA1);
+                wrap = 2;
+                debug!("trailing");
+            }
+        }
+
+        match program_load_res {
+            Err(error) => return Err(ErrorCode::FAIL),
+            _ => {}
+        }
 
         let mut custom_config = StateMachineConfiguration::default();
-        // the program requires auto push and pull to be on
-        // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/spi_loopback.c
-        //
-        //  float clkdiv = 31.25f;  // 1 MHz @ 125 clk_sys
-        // custom_config.div_int = 31;
-        // custom_config.div_frac = 64; // is 64/256 = 1/4
 
         custom_config.div_int = self.clock_div_int.get();
         custom_config.div_frac = self.clock_div_frac.get();
@@ -329,7 +324,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         custom_config.in_pins_base = self.in_pin;
         custom_config.out_pins_base = self.out_pin;
         custom_config.side_set_bit_count = 1;
-        custom_config.wrap = 1;
+        custom_config.wrap = wrap;
         custom_config.in_autopush = true;
         custom_config.out_autopull = true;
 
@@ -368,13 +363,11 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             Option<SubSliceMut<'static, u8>>,
         ),
     > {
-        // buffer should be at least one thing big
         if write_buffer.len() < 1 {
             return Err((ErrorCode::INVAL, write_buffer, read_buffer));
         }
 
-        // TODO
-        // keep track of the new buffers
+        // Keep track of the new buffers
         self.len.replace(write_buffer.len());
         self.tx_buffer.replace(write_buffer);
         self.tx_position.set(0);
@@ -394,30 +387,23 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
-        // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
-        // in this example they reading and dumping after they're writing
         match self.pio.sm(self.sm_number).push(val as u32) {
             Err(error) => return Err(error),
             _ => {}
         }
 
         if !self.pio.sm(self.sm_number).rx_empty() {
-            match self.pio.sm(self.sm_number).pull() {
-                Ok(val) => {}
-                Err(err) => {}
-            }
+            let _ = self.pio.sm(self.sm_number).pull();
         }
 
         Ok(())
     }
 
     fn read_byte(&self) -> Result<u8, ErrorCode> {
-        let mut data: u32 = 0;
+        let mut data: u32;
 
-        // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
-        // in this example they write 0 out before they're reading
         if !self.pio.sm(self.sm_number).tx_full() {
-            self.pio.sm(self.sm_number).push(0);
+            let _ = self.pio.sm(self.sm_number).push(0);
         }
 
         data = match self.pio.sm(self.sm_number).pull() {
@@ -433,18 +419,13 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn read_write_byte(&self, val: u8) -> Result<u8, ErrorCode> {
-        let mut data: u32 = 0;
-        // Read data from the RX FIFO
+        let mut data: u32;
 
-        // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
-        // in this example they write 0 out before they're reading
-        if !self.pio.sm(self.sm_number).tx_full() {
-            match self.pio.sm(self.sm_number).push(val as u32) {
-                Err(err) => {
-                    return Err(err);
-                }
-                _ => {}
+        match self.pio.sm(self.sm_number).push(val as u32) {
+            Err(err) => {
+                return Err(err);
             }
+            _ => {}
         }
 
         data = match self.pio.sm(self.sm_number).pull() {
@@ -469,8 +450,11 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         }
 
         let sysclock_freq = self.clocks.map_or(SYSCLOCK_FREQ, |clocks| {
-            clocks.get_frequency(clocks::Clock::Peripheral)
+            clocks.get_frequency(clocks::Clock::System)
         });
+
+        debug!("Demanded frequency is {rate}");
+        debug!("System frequency {sysclock_freq}");
 
         // rate = SYSCLOCK_FREQ / div
         // div = SYCLCcOK / rate
@@ -480,7 +464,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         fractional part of sysclock/rate is
         (sysclock % rate) / rate
         but want it to be a fraction of 256
-        dvifrac = [ (sysclock % rate) / rate ] * 256
+        divfrac = (sysclock % rate) * 256 * rate
         */
         let divfrac = (sysclock_freq % rate) * 256u32 / rate;
 
@@ -492,6 +476,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         self.pio
             .sm(self.sm_number)
             .set_clkdiv_int_frac(divint, divfrac);
+        self.pio.sm(self.sm_number).clkdiv_restart();
         self.pio.sm(self.sm_number).set_enabled(true);
 
         Ok(rate)
@@ -503,17 +488,19 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             clocks.get_frequency(clocks::Clock::Peripheral)
         });
 
-        let divisor = self.clock_div_int.get() + (self.clock_div_frac.get() / 256u32);
+        let divisor = self.clock_div_int.get() as f32 + (self.clock_div_frac.get() as f32 / 256f32);
 
-        if divisor == 0 {
-            return sysclock_freq;
+        if divisor == 0f32 {
+            // page 375 of the rp2040 datasheet says it defaults to 65536 if given 0
+            return sysclock_freq / 65536u32;
         }
 
-        sysclock_freq / divisor
+        (sysclock_freq as f32 / divisor) as u32
     }
 
     fn set_polarity(&self, polarity: ClockPolarity) -> Result<(), ErrorCode> {
-        unimplemented!("Polarity is fixed");
+        // unimplemented!("Polarity is fixed");
+        Ok(())
     }
 
     fn get_polarity(&self) -> ClockPolarity {
@@ -522,8 +509,8 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
     fn set_phase(&self, phase: ClockPhase) -> Result<(), ErrorCode> {
         // TODO: how to channge program in the thing
-        unimplemented!("Not implemented yet");
-        // Ok(())
+        // unimplemented!("Not implemented yet");
+        Ok(())
     }
 
     fn get_phase(&self) -> ClockPhase {
@@ -537,15 +524,9 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
 impl<'a> PioTxClient for PioSpi<'a> {
     fn on_buffer_space_available(&self) {
-        // TODO: make this keep writing data
-        // debug!("INSIDE INTERRUPT HANDLER buffer space available\n");
-
-        // increment the tx index
         self.tx_position.set(self.tx_position.get() + 1);
         match self.state.get() {
-            // if currently writing try to write the next byte
             PioSpiState::Writing | PioSpiState::ReadingWriting => {
-                // debug!("trying to write more");
                 self.read_write_buffers();
             }
             _ => {}
@@ -561,7 +542,6 @@ impl<'a> PioTxClient for PioSpi<'a> {
 
 impl<'a> PioRxClient for PioSpi<'a> {
     fn on_data_received(&self, data: u32) {
-        // TODO: make this actually record the data
         let pin = RPGpioPin::new(RPGpio::GPIO9);
         pin.make_output();
         for i in 0..16 {
@@ -579,9 +559,7 @@ impl<'a> PioRxClient for PioSpi<'a> {
         }
 
         match self.state.get() {
-            // if currently writing try to write the next byte
             PioSpiState::Reading | PioSpiState::ReadingWriting => {
-                // debug!("trying to read more more");
                 self.read_write_buffers();
             }
             _ => {}
