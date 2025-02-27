@@ -14,7 +14,6 @@ use kernel::debug;
 use kernel::deferred_call::{DeferredCall, DeferredCallClient};
 use kernel::hil::gpio::{Configure, Output};
 use kernel::hil::spi::cs::ChipSelectPolar;
-use kernel::hil::spi::SpiMaster;
 use kernel::hil::spi::SpiMasterClient;
 use kernel::hil::spi::{ClockPhase, ClockPolarity};
 use kernel::utilities::cells::MapCell;
@@ -22,13 +21,29 @@ use kernel::utilities::cells::OptionalCell;
 use kernel::utilities::leasable_buffer::SubSliceMut;
 use kernel::{hil, ErrorCode};
 
-// since auto push / pull is set to 8 for the purposes of writing in bytes rather than words
-// values read in have to be bitshifted by 24
+// Since auto push / pull is set to 8 for the purposes of writing in bytes
+// rather than words, values read in have to be bitshifted by 24
 const AUTOPULL_SHIFT: usize = 24;
 
+// Frequency of system clock, for rate changess
+const SYSCLOCK_FREQ: u32 = 125_000_000;
+
+// // Leading edge clock phase
+// const SPI_CPHA0: [u16; 2] = [
+//     0x6101, /*  0: out    pins, 1         side 0 [1] */
+//     0x5101, /*  1: in     pins, 1         side 1 [1] */
+// ];
+
+// // Trailing edge clock phase
+// const SPI_CPHA1: [u16; 3] = [
+//     0x6021, /* 0: out    x, 1            side 0 */
+//     0xb101, /* 1: mov    pins, x         side 1 [1] */
+//     0x4001, /* 2: in     pins, 1         side 0 */
+// ];
+
 pub struct PioSpi<'a> {
-    clocks: &'a clocks::Clocks,
-    pio: &'a Pio, //TakeCell<'a, Pio>,
+    clocks: OptionalCell<&'a clocks::Clocks>,
+    pio: &'a Pio,
     side_set_pin: u32,
     out_pin: u32,
     in_pin: u32,
@@ -42,7 +57,11 @@ pub struct PioSpi<'a> {
     len: Cell<usize>,
     state: Cell<PioSpiState>,
     deferred_call: DeferredCall,
+    clock_div_int: Cell<u32>,
+    clock_div_frac: Cell<u32>,
+    clock_phase: Cell<ClockPhase>,
 }
+
 #[repr(u8)]
 #[derive(Clone, Copy)]
 pub enum PioSpiState {
@@ -61,9 +80,10 @@ impl<'a> PioSpi<'a> {
         out_pin: u32,
         sm_number: SMNumber,
         pio_number: PIONumber,
+        clock_phase: ClockPhase,
     ) -> Self {
         Self {
-            clocks,
+            clocks: OptionalCell::new(clocks),
             pio: pio,
             side_set_pin: side_set_pin,
             in_pin: in_pin,
@@ -78,15 +98,20 @@ impl<'a> PioSpi<'a> {
             len: Cell::new(0),
             state: Cell::new(PioSpiState::Free),
             deferred_call: DeferredCall::new(),
+            clock_div_int: Cell::new(31u32), // defaults to 1 MHz
+            clock_div_frac: Cell::new(64u32),
+            clock_phase: Cell::new(clock_phase),
         }
     }
 
+    // Block until both the RX and TX FIFO's are empty
     pub fn block_until_empty(&self) {
         while !self.pio.sm(self.sm_number).rx_empty() || !self.pio.sm(self.sm_number).tx_empty() {
             self.clear_fifos();
         }
     }
 
+    // Returns whether or not the RX FIFO is empty
     pub fn rx_empty(&self) -> bool {
         let mut empty: bool = true;
         if !self.pio.sm(self.sm_number).rx_empty() {
@@ -96,19 +121,17 @@ impl<'a> PioSpi<'a> {
         empty
     }
 
+    // Read a word from the RX FIFO
     pub fn read_word(&self) -> Result<u32, ErrorCode> {
-        let mut data: u32 = 0;
+        let data: u32;
 
-        // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
-        // in this example they write 0 out before they're reading
         if !self.pio.sm(self.sm_number).tx_full() {
-            self.pio.sm(self.sm_number).push_blocking(0);
+            let _ = self.pio.sm(self.sm_number).push(0);
         }
 
         data = match self.pio.sm(self.sm_number).pull() {
             Ok(res) => res,
             Err(err) => {
-                debug!("Error code : STATE MACHINE BUSY");
                 return Err(err);
             }
         };
@@ -116,56 +139,52 @@ impl<'a> PioSpi<'a> {
         Ok(data)
     }
 
+    // Write a word to the TX FIFO
     pub fn write_word(&self, val: u32) -> Result<(), ErrorCode> {
-        // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/pio_spi.c
-        // in this example they reading and dumping after they're writing
-        self.pio.sm(self.sm_number).push_blocking(val);
+        let res = self.pio.sm(self.sm_number).push(val);
+
+        match res {
+            Err(err) => {
+                return Err(err);
+            }
+            _ => {}
+        }
 
         if !self.pio.sm(self.sm_number).rx_empty() {
-            let _ = self.pio.sm(self.sm_number).pull_blocking().unwrap();
+            let _ = self.pio.sm(self.sm_number).pull();
         }
 
         Ok(())
     }
 
+    // Reads and writes to and from the buffers
     fn read_write_buffers(&self) {
         self.tx_buffer.map(|buf| {
-            let txcursor = self.tx_position.get();
-            let rxcursor = self.rx_position.get();
-
-            // let mut keepgoing = true;
             let temp = self.len.get();
-            // debug!("Trying to read and write more from buffers");
-            // debug!("indices in buffers {txcursor} {rxcursor} length {temp}");
 
-            for i in 0..4 {
-                // only 4 words fit in a FIFO anyway
+            for _i in 0..4 {
                 let mut errors = false;
 
-                // try to write one byte
+                // Try to write one byte
                 if self.tx_position.get() < temp {
                     let res = self
                         .pio
                         .sm(self.sm_number)
                         .push(buf[self.tx_position.get()] as u32);
                     match res {
-                        Err(error) => errors = true,
+                        Err(_error) => errors = true,
                         _ => {
                             self.tx_position.set(self.tx_position.get() + 1);
                         }
                     }
                 }
 
-                // try to read one byte
+                // Try to read one byte
                 if self.rx_position.get() < temp {
                     let data = self.pio.sm(self.sm_number).pull();
                     match data {
                         Ok(val) => {
-                            // this branch basically never gets called because there is likely nothing new in the buffer
-                            // leave it here just in case
-
                             self.rx_buffer.map(|readbuf| {
-                                // debug!("Read value {val}");
                                 readbuf[self.rx_position.get()] = (val >> AUTOPULL_SHIFT) as u8;
                                 self.rx_position.set(self.rx_position.get() + 1);
                             });
@@ -174,18 +193,18 @@ impl<'a> PioSpi<'a> {
                     }
                 }
 
-                // if done, then reset and call client
+                // If we are done reading and writing, then reset and call client
                 if self.tx_position.get() >= self.len.get()
                     && self.rx_position.get() >= self.len.get()
                 {
                     // printing tx contents
-                    // let mut idx = 0;
-                    // debug!("Printing TX Buffer");
-                    // while idx < buf.len() {
-                    //     let temp = buf[idx];
-                    // debug!("[TX buf] {temp}");
-                    //     idx += 1;
-                    // }
+                    debug!("Printing TX Buffer");
+                    let mut idx = 0;
+                    while idx < buf.len() {
+                        let temp = buf[idx];
+                        debug!("[TX buf] {temp}");
+                        idx += 1;
+                    }
 
                     // printing rx contents
                     debug!("Printing RX Buffer");
@@ -198,26 +217,12 @@ impl<'a> PioSpi<'a> {
                         }
                     });
 
-                    // should maybe not set it to free if it is writing
                     self.state.set(PioSpiState::Free);
                     self.len.set(0);
                     self.tx_position.set(0);
                     self.rx_position.set(0);
-
                     self.deferred_call.set();
 
-                    // the following is now in the deferred call
-                    // debug!("Transferring ownership");
-                    // // transfer ownership to client
-                    // if let Some(tx_buffer) = self.tx_buffer.take() {
-                    //     self.client.map(|client| {
-                    //         client.read_write_done(
-                    //             tx_buffer,
-                    //             self.rx_buffer.take(),
-                    //             Ok(0 as usize),
-                    //         );
-                    //     });
-                    // }
                     break;
                 }
 
@@ -228,10 +233,12 @@ impl<'a> PioSpi<'a> {
         });
     }
 
+    // Restart the clock
     pub fn restart_clock(&self) {
         self.pio.sm(self.sm_number).clkdiv_restart();
     }
 
+    // Clear both the TX and RX FIFO's
     pub fn clear_fifos(&self) {
         self.pio.sm(self.sm_number).clear_fifos();
     }
@@ -243,51 +250,66 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     fn init(&self) -> Result<(), ErrorCode> {
         /*
 
-                implements this program for now
-                https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/spi.pio
+        implements this program for now
+        https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/spi.pio
 
-                assembly found here I think on line 63
-
-
-                .pio_version 0 // only requires PIO version 0
-                https://github.com/zephyrproject-rtos/zephyr/blob/main/drivers/spi/spi_rpi_pico_pio.c
-
-                #define SPI_MODE_0_0_WRAP_TARGET 0
-        #define SPI_MODE_0_0_WRAP        1
-        #define SPI_MODE_0_0_CYCLES      4
+        assembly found here I think on line 63
 
 
+        .pio_version 0 // only requires PIO version 0
+        https://github.com/zephyrproject-rtos/zephyr/blob/main/drivers/spi/spi_rpi_pico_pio.c
 
-                .program spi_cpha0
-                .side_set 1
 
-                ; Pin assignments:
-                ; - SCK is side-set pin 0
-                ; - MOSI is OUT pin 0
-                ; - MISO is IN pin 0
-                ;
-                ; Autopush and autopull must be enabled, and the serial frame size is set by
-                ; configuring the push/pull threshold. Shift left/right is fine, but you must
-                ; justify the data yourself. This is done most conveniently for frame sizes of
-                ; 8 or 16 bits by using the narrow store replication and narrow load byte
-                ; picking behaviour of RP2040's IO fabric.
+        ; Clock phase = 0: data is captured on the leading edge of each SCK pulse, and
+        ; transitions on the trailing edge, or some time before the first leading edge.
 
-                ; Clock phase = 0: data is captured on the leading edge of each SCK pulse, and
-                ; transitions on the trailing edge, or some time before the first leading edge.
+        ; Clock phase = 1: data transitions on the leading edge of each SCK pulse, and
+        ; is captured on the trailing edge.
 
-                    out pins, 1 side 0 [1] ; Stall here on empty (sideset proceeds even if
-                    in pins, 1  side 1 [1] ; instruction stalls, so we stall with SCK low)
 
-                */
 
-        let asm: [u16; 2] = [
+        */
+
+        // let asm: [u16; 2] = [
+        //     0x6101, /*  0: out    pins, 1         side 0 [1] */
+        //     0x5101, /*  1: in     pins, 1         side 1 [1] */
+        // ];
+
+        // Leading edge clock phase
+        let SPI_CPHA0: [u16; 2] = [
             0x6101, /*  0: out    pins, 1         side 0 [1] */
             0x5101, /*  1: in     pins, 1         side 1 [1] */
         ];
 
+        // Trailing edge clock phase
+        let SPI_CPHA1: [u16; 3] = [
+            0x6021, /* 0: out    x, 1            side 0 */
+            0xb101, /* 1: mov    pins, x         side 1 [1] */
+            0x4001, /* 2: in     pins, 1         side 0 */
+        ];
+
+        let _ = self.pio.add_program16(None::<usize>, &SPI_CPHA0);
+
+        // let mut program_load_res;
+
+        // match self.clock_phase.get() {
+        //     ClockPhase::SampleLeading => {
+        //         program_load_res = self.pio.add_program16(None::<usize>, &SPI_CPHA0);
+        //     }
+        //     ClockPhase::SampleTrailing => {
+        //         program_load_res = self.pio.add_program16(None::<usize>, &SPI_CPHA1);
+        //         custom_config.wrap = 2;
+        //         debug!("trailing");
+        //     }
+        // }
+
+        // match program_load_res {
+        //     Err(error) => return Err(ErrorCode::FAIL),
+        //     _ => {}
+        // }
+
         self.pio.init();
-        self.pio.add_program16(None::<usize>, &asm);
-        // TODO: add custom configurations if necessary
+
         let mut custom_config = StateMachineConfiguration::default();
         // the program requires auto push and pull to be on
         // https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/spi_loopback.c
@@ -295,6 +317,9 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         //  float clkdiv = 31.25f;  // 1 MHz @ 125 clk_sys
         // custom_config.div_int = 31;
         // custom_config.div_frac = 64; // is 64/256 = 1/4
+
+        custom_config.div_int = self.clock_div_int.get();
+        custom_config.div_frac = self.clock_div_frac.get();
 
         // should be able to work on bytes according to the PIO manual
         custom_config.in_push_threshold = 8;
@@ -307,6 +332,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         custom_config.wrap = 1;
         custom_config.in_autopush = true;
         custom_config.out_autopull = true;
+
         self.pio.spi_program_init(
             self.sm_number,
             self.side_set_pin,
@@ -323,6 +349,10 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn is_busy(&self) -> bool {
+        // match self.state.get() {
+        //     PioSpiState::Free => true,
+        //     _ => false,
+        // }
         true
     }
 
@@ -434,15 +464,56 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn set_rate(&self, rate: u32) -> Result<u32, ErrorCode> {
+        if rate == 0 {
+            return Err(ErrorCode::FAIL);
+        }
+
+        let sysclock_freq = self.clocks.map_or(SYSCLOCK_FREQ, |clocks| {
+            clocks.get_frequency(clocks::Clock::Peripheral)
+        });
+
+        // rate = SYSCLOCK_FREQ / div
+        // div = SYCLCcOK / rate
+        let divint = sysclock_freq / rate;
+
+        /*
+        fractional part of sysclock/rate is
+        (sysclock % rate) / rate
+        but want it to be a fraction of 256
+        dvifrac = [ (sysclock % rate) / rate ] * 256
+        */
+        let divfrac = (sysclock_freq % rate) * 256u32 / rate;
+
+        self.clock_div_int.replace(divint);
+        self.clock_div_frac.replace(divfrac);
+
+        // reinit the PIO so it updates the times
+        self.pio.sm(self.sm_number).set_enabled(false);
+        self.pio
+            .sm(self.sm_number)
+            .set_clkdiv_int_frac(divint, divfrac);
+        self.pio.sm(self.sm_number).set_enabled(true);
+
         Ok(rate)
     }
 
     fn get_rate(&self) -> u32 {
-        4 as u32
+        // rate = SYSCLOCK_FREQ / (clkdiv int + (clkdiv frac/256))
+        let sysclock_freq = self.clocks.map_or(SYSCLOCK_FREQ, |clocks| {
+            clocks.get_frequency(clocks::Clock::Peripheral)
+        });
+
+        let divisor = self.clock_div_int.get() + (self.clock_div_frac.get() / 256u32);
+
+        if divisor == 0 {
+            return sysclock_freq;
+        }
+
+        sysclock_freq / divisor
     }
 
     fn set_polarity(&self, polarity: ClockPolarity) -> Result<(), ErrorCode> {
-        Ok(())
+        unimplemented!("Polarity is fixed");
     }
 
     fn get_polarity(&self) -> ClockPolarity {
@@ -450,11 +521,13 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn set_phase(&self, phase: ClockPhase) -> Result<(), ErrorCode> {
-        Ok(())
+        // TODO: how to channge program in the thing
+        unimplemented!("Not implemented yet");
+        // Ok(())
     }
 
     fn get_phase(&self) -> ClockPhase {
-        ClockPhase::SampleLeading
+        self.clock_phase.get()
     }
 
     fn hold_low(&self) {}
@@ -522,7 +595,7 @@ impl<'a> DeferredCallClient for PioSpi<'a> {
 
         debug!("Transferring ownership");
         debug!("Calling client in deferred call");
-        // transfer ownership to client
+        // Transfer ownership to client
         if let Some(tx_buffer) = self.tx_buffer.take() {
             self.client.map(|client| {
                 client.read_write_done(tx_buffer, self.rx_buffer.take(), Ok(0 as usize));

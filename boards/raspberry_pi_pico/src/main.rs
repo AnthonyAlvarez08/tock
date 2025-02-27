@@ -31,7 +31,7 @@ use kernel::hil::gpio::{Configure, FloatingState};
 use kernel::hil::i2c::I2CMaster;
 use kernel::hil::led::LedHigh;
 use kernel::hil::pwm::Pwm;
-use kernel::hil::spi::SpiMaster;
+use kernel::hil::spi::{ClockPhase, SpiMaster};
 use kernel::hil::usb::Client;
 use kernel::platform::{KernelResources, SyscallDriverLookup};
 use kernel::scheduler::round_robin::RoundRobinSched;
@@ -584,8 +584,14 @@ pub unsafe fn start() -> (
             12, // out
             SMNumber::SM0,
             PIONumber::PIO0,
+            ClockPhase::SampleLeading,
         )
     );
+
+    for _ in 0..20 {
+        pin6.toggle();
+    }
+
     // make the pio subscribe to interrupts
     peripherals.pio0.sm(SMNumber::SM0).set_rx_client(_pio_spi);
     peripherals.pio0.sm(SMNumber::SM0).set_tx_client(_pio_spi);
@@ -601,8 +607,14 @@ pub unsafe fn start() -> (
             21, // out
             SMNumber::SM1,
             PIONumber::PIO1,
+            ClockPhase::SampleLeading,
         )
     );
+
+    for _ in 0..20 {
+        pin7.toggle();
+    }
+
     // make the pio subscribe to interrupts
     peripherals
         .pio1
@@ -615,14 +627,24 @@ pub unsafe fn start() -> (
 
     // // debug!("Attempting to initialize PIO");
     let _ = _pio_spi.init();
+
+    for _ in 0..20 {
+        pin8.toggle();
+    }
+
     let _ = _receive_spi.init();
+
+    for _ in 0..20 {
+        pin9.toggle();
+    }
+
     _pio_spi.register();
     _receive_spi.register();
 
-    _receive_spi.clear_fifos();
-    _pio_spi.clear_fifos();
-    _receive_spi.block_until_empty();
-    _pio_spi.block_until_empty();
+    // _receive_spi.clear_fifos();
+    // _pio_spi.clear_fifos();
+    // _receive_spi.block_until_empty();
+    // _pio_spi.block_until_empty();
     // debug!("empty rx on receive spi");
 
     // put like 4 bytes in a queue, and read
@@ -694,6 +716,10 @@ pub unsafe fn start() -> (
     wifi_spi.register();
     _receive_spi.set_client(wifi_spi);
 
+    for _ in 0..20 {
+        pin6.toggle();
+    }
+
     let spi_mux2 = components::spi::SpiMuxComponent::new(_pio_spi)
         .finalize(components::spi_mux_component_static!(PioSpi));
 
@@ -709,6 +735,9 @@ pub unsafe fn start() -> (
     ));
     wifi_spi2.register();
     _pio_spi.set_client(wifi_spi2);
+    for _ in 0..20 {
+        pin7.toggle();
+    }
 
     // I temporarily made the buffer sizes 8 for the spi capsule
     static mut outbuf: [u8; 8] = [
@@ -716,8 +745,14 @@ pub unsafe fn start() -> (
     ];
     // _pio_spi.write_word(0xA7);
     let _ = wifi_spi.start(&mut outbuf, 0);
+    for _ in 0..20 {
+        pin8.toggle();
+    }
 
     let _ = wifi_spi2.start(&mut outbuf, 0);
+    for _ in 0..20 {
+        pin9.toggle();
+    }
 
     // wifi_spi.print_read();
 
