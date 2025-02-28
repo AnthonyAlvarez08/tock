@@ -13,7 +13,7 @@ use core::cell::Cell;
 use kernel::debug;
 use kernel::deferred_call::{DeferredCall, DeferredCallClient};
 use kernel::hil::gpio::{Configure, Output};
-use kernel::hil::spi::cs::ChipSelectPolar;
+use kernel::hil::spi::cs::{ChipSelectPolar, Polarity};
 use kernel::hil::spi::SpiMasterClient;
 use kernel::hil::spi::{ClockPhase, ClockPolarity};
 use kernel::utilities::cells::MapCell;
@@ -28,18 +28,18 @@ const AUTOPULL_SHIFT: usize = 24;
 // Frequency of system clock, for rate changess
 const SYSCLOCK_FREQ: u32 = 125_000_000;
 
-// // Leading edge clock phase
-// const SPI_CPHA0: [u16; 2] = [
-//     0x6101, /*  0: out    pins, 1         side 0 [1] */
-//     0x5101, /*  1: in     pins, 1         side 1 [1] */
-// ];
+// Leading edge clock phase
+const SPI_CPHA0: [u16; 2] = [
+    0x6101, /*  0: out    pins, 1         side 0 [1] */
+    0x5101, /*  1: in     pins, 1         side 1 [1] */
+];
 
-// // Trailing edge clock phase
-// const SPI_CPHA1: [u16; 3] = [
-//     0x6021, /* 0: out    x, 1            side 0 */
-//     0xb101, /* 1: mov    pins, x         side 1 [1] */
-//     0x4001, /* 2: in     pins, 1         side 0 */
-// ];
+// Trailing edge clock phase
+const SPI_CPHA1: [u16; 3] = [
+    0x6021, /* 0: out    x, 1            side 0 */
+    0xb101, /* 1: mov    pins, x         side 1 [1] */
+    0x4001, /* 2: in     pins, 1         side 0 */
+];
 
 pub struct PioSpi<'a> {
     clocks: OptionalCell<&'a clocks::Clocks>,
@@ -60,6 +60,7 @@ pub struct PioSpi<'a> {
     clock_div_int: Cell<u32>,
     clock_div_frac: Cell<u32>,
     clock_phase: Cell<ClockPhase>,
+    chip_select: OptionalCell<ChipSelectPolar<'a, crate::gpio::RPGpioPin<'a>>>,
 }
 
 #[repr(u8)]
@@ -98,9 +99,10 @@ impl<'a> PioSpi<'a> {
             len: Cell::new(0),
             state: Cell::new(PioSpiState::Free),
             deferred_call: DeferredCall::new(),
-            clock_div_int: Cell::new(125u32), // defaults to 1 MHz
-            clock_div_frac: Cell::new(0u32),
+            clock_div_int: Cell::new(31u32), // defaults to 1 MHz
+            clock_div_frac: Cell::new(64u32),
             clock_phase: Cell::new(clock_phase),
+            chip_select: OptionalCell::empty(),
         }
     }
 
@@ -270,30 +272,11 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
         */
 
-        // let asm: [u16; 2] = [
-        //     0x6101, /*  0: out    pins, 1         side 0 [1] */
-        //     0x5101, /*  1: in     pins, 1         side 1 [1] */
-        // ];
-
-        // Leading edge clock phase
-        let SPI_CPHA0: [u16; 2] = [
-            0x6101, /*  0: out    pins, 1         side 0 [1] */
-            0x5101, /*  1: in     pins, 1         side 1 [1] */
-        ];
-
-        // Trailing edge clock phase
-        let SPI_CPHA1: [u16; 3] = [
-            0x6021, /* 0: out    x, 1            side 0 */
-            0xb101, /* 1: mov    pins, x         side 1 [1] */
-            0x4001, /* 2: in     pins, 1         side 0 */
-        ];
-
         self.pio.init();
-        // let _ = self.pio.add_program16(None::<usize>, &SPI_CPHA0);
 
         let mut wrap = 1;
 
-        let mut program_load_res;
+        let program_load_res;
 
         match self.clock_phase.get() {
             ClockPhase::SampleLeading => {
@@ -344,11 +327,10 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn is_busy(&self) -> bool {
-        // match self.state.get() {
-        //     PioSpiState::Free => true,
-        //     _ => false,
-        // }
-        true
+        match self.state.get() {
+            PioSpiState::Free => true,
+            _ => false,
+        }
     }
 
     fn read_write_bytes(
@@ -366,6 +348,11 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         if write_buffer.len() < 1 {
             return Err((ErrorCode::INVAL, write_buffer, read_buffer));
         }
+
+        // if there is a chip select, make sure it is on
+        self.chip_select.map(|p| {
+            p.activate();
+        });
 
         // Keep track of the new buffers
         self.len.replace(write_buffer.len());
@@ -441,7 +428,12 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn specify_chip_select(&self, cs: Self::ChipSelect) -> Result<(), ErrorCode> {
-        Ok(())
+        if !self.is_busy() {
+            self.chip_select.set(cs);
+            Ok(())
+        } else {
+            Err(ErrorCode::BUSY)
+        }
     }
 
     fn set_rate(&self, rate: u32) -> Result<u32, ErrorCode> {
@@ -453,8 +445,14 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             clocks.get_frequency(clocks::Clock::System)
         });
 
-        debug!("Demanded frequency is {rate}");
-        debug!("System frequency {sysclock_freq}");
+        // program does two instructions per every SPI clock peak
+        // still runs at half of rate after that for some reason so multiply again by two
+        let rate = rate * 4;
+
+        // obviously the max clock rate is the sys clock
+        if rate > sysclock_freq {
+            return Err(ErrorCode::INVAL);
+        }
 
         // rate = SYSCLOCK_FREQ / div
         // div = SYCLCcOK / rate
@@ -495,7 +493,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             return sysclock_freq / 65536u32;
         }
 
-        (sysclock_freq as f32 / divisor) as u32
+        (sysclock_freq as f32 / divisor) as u32 / 4u32
     }
 
     fn set_polarity(&self, polarity: ClockPolarity) -> Result<(), ErrorCode> {
@@ -517,9 +515,17 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         self.clock_phase.get()
     }
 
-    fn hold_low(&self) {}
+    fn hold_low(&self) {
+        self.chip_select.map(|p| {
+            p.activate();
+        });
+    }
 
-    fn release_low(&self) {}
+    fn release_low(&self) {
+        self.chip_select.map(|p| {
+            p.deactivate();
+        });
+    }
 }
 
 impl<'a> PioTxClient for PioSpi<'a> {
@@ -569,7 +575,9 @@ impl<'a> PioRxClient for PioSpi<'a> {
 
 impl<'a> DeferredCallClient for PioSpi<'a> {
     fn handle_deferred_call(&self) {
-        // Your action here
+        // called when we are done transfering
+
+        self.state.set(PioSpiState::Free);
 
         debug!("Transferring ownership");
         debug!("Calling client in deferred call");
