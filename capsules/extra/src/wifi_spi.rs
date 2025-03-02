@@ -8,7 +8,7 @@ use kernel::utilities::cells::{MapCell, OptionalCell, TakeCell};
 use kernel::utilities::leasable_buffer::SubSliceMut;
 use kernel::{ErrorCode, ProcessId};
 
-use capsules_core::driver;
+use capsules_core::driver::{self, NUM};
 use capsules_core::virtualizers::virtual_spi::MuxSpiMaster;
 use kernel::deferred_call::{DeferredCall, DeferredCallClient};
 use kernel::grant::{AllowRoCount, AllowRwCount, Grant, UpcallCount};

@@ -15,6 +15,7 @@
 use core::borrow::BorrowMut;
 use core::ptr::{addr_of, addr_of_mut};
 
+use capsules_core::gpio::GPIO;
 use capsules_core::i2c_master::I2CMasterDriver;
 use capsules_core::virtualizers::virtual_alarm::VirtualMuxAlarm;
 use capsules_extra::wifi_spi::WiFiSpi;
@@ -52,6 +53,7 @@ use rp2040::pio::Pio;
 use rp2040::pio::{PIONumber, SMNumber, StateMachineConfiguration};
 use rp2040::pio_pwm::PioPwm;
 // use rp2040::pio_spi::PioInterruptClient;
+use rp2040::cyw43::CYW43_DRIVER;
 use rp2040::pio_spi::PioSpi;
 use rp2040::resets::Peripheral;
 use rp2040::sysinfo;
@@ -573,6 +575,16 @@ pub unsafe fn start() -> (
         pin9.toggle(); // orange line, inside receiver spi
     }
 
+    // try to turn on the wifi chip
+    let pin23 = peripherals.pins.get_pin(RPGpio::GPIO23);
+    pin23.make_output();
+    pin23.set_function(GpioFunction::PIO0);
+    pin23.set();
+    let pin25 = peripherals.pins.get_pin(RPGpio::GPIO25);
+    pin25.make_output();
+    pin25.set_function(GpioFunction::PIO0);
+    pin25.set();
+
     // let pio = static_init!(Pio, Pio::new_pio1());
     let _pio_spi: &'static mut PioSpi<'static> = static_init!(
         PioSpi,
@@ -624,6 +636,26 @@ pub unsafe fn start() -> (
 
     _pio_spi.register();
     _receive_spi.register();
+
+    let _wifi_spi: &'static mut CYW43_DRIVER<'static> = static_init!(
+        CYW43_DRIVER,
+        CYW43_DRIVER::<'static>::new(&peripherals.pio0, SMNumber::SM1)
+    );
+
+    match _wifi_spi.init() {
+        Err(_err) => {
+            debug!("WiFi SPI Init Error")
+        }
+        _ => {}
+    }
+    match _wifi_spi.try_read() {
+        Err(_err) => {
+            debug!("Try Read Error")
+        }
+        Ok(res) => {
+            debug!("This is what we read: {res}")
+        }
+    }
 
     // _receive_spi.clear_fifos();
     // _pio_spi.clear_fifos();
@@ -684,52 +716,52 @@ pub unsafe fn start() -> (
     // 24 = both input and output
     // 23 = power on
 
-    let spi_mux = components::spi::SpiMuxComponent::new(_receive_spi)
-        .finalize(components::spi_mux_component_static!(PioSpi));
+    // let spi_mux = components::spi::SpiMuxComponent::new(_receive_spi)
+    //     .finalize(components::spi_mux_component_static!(PioSpi));
 
-    let wifi_spi = components::wifi_spi::WiFiSpiComponent::new(
-        spi_mux,
-        peripherals.pins.get_pin(RPGpio::GPIO25),
-        board_kernel,
-        capsules_extra::wifi_spi::DRIVER_NUM,
-    )
-    .finalize(components::wifi_spi_component_static!(
-        // spi type
-        PioSpi
-    ));
-    wifi_spi.register();
-    _receive_spi.set_client(wifi_spi);
+    // let wifi_spi = components::wifi_spi::WiFiSpiComponent::new(
+    //     spi_mux,
+    //     peripherals.pins.get_pin(RPGpio::GPIO25),
+    //     board_kernel,
+    //     capsules_extra::wifi_spi::DRIVER_NUM,
+    // )
+    // .finalize(components::wifi_spi_component_static!(
+    //     // spi type
+    //     PioSpi
+    // ));
+    // wifi_spi.register();
+    // _receive_spi.set_client(wifi_spi);
 
-    let spi_mux2 = components::spi::SpiMuxComponent::new(_pio_spi)
-        .finalize(components::spi_mux_component_static!(PioSpi));
+    // let spi_mux2 = components::spi::SpiMuxComponent::new(_pio_spi)
+    //     .finalize(components::spi_mux_component_static!(PioSpi));
 
-    let wifi_spi2 = components::wifi_spi::WiFiSpiComponent::new(
-        spi_mux2,
-        peripherals.pins.get_pin(RPGpio::GPIO25),
-        board_kernel,
-        capsules_extra::wifi_spi::DRIVER_NUM,
-    )
-    .finalize(components::wifi_spi_component_static!(
-        // spi type
-        PioSpi
-    ));
-    wifi_spi2.register();
-    _pio_spi.set_client(wifi_spi2);
+    // let wifi_spi2 = components::wifi_spi::WiFiSpiComponent::new(
+    //     spi_mux2,
+    //     peripherals.pins.get_pin(RPGpio::GPIO25),
+    //     board_kernel,
+    //     capsules_extra::wifi_spi::DRIVER_NUM,
+    // )
+    // .finalize(components::wifi_spi_component_static!(
+    //     // spi type
+    //     PioSpi
+    // ));
+    // wifi_spi2.register();
+    // _pio_spi.set_client(wifi_spi2);
 
-    // I temporarily made the buffer sizes 8 for the spi capsule
-    static mut outbuf: [u8; 8] = [
-        0x6Au8, 0xB1u8, 0x43u8, 0xF1u8, 0x42u8, 0xE2u8, 0x79u8, 0x2Cu8,
-    ];
-    // _pio_spi.write_word(0xA7);
-    let _ = wifi_spi.start(&mut outbuf, 0);
-    for _ in 0..20 {
-        pin8.toggle();
-    }
+    // // I temporarily made the buffer sizes 8 for the spi capsule
+    // static mut outbuf: [u8; 8] = [
+    //     0x6Au8, 0xB1u8, 0x43u8, 0xF1u8, 0x42u8, 0xE2u8, 0x79u8, 0x2Cu8,
+    // ];
+    // // _pio_spi.write_word(0xA7);
+    // let _ = wifi_spi.start(&mut outbuf, 0);
+    // for _ in 0..20 {
+    //     pin8.toggle();
+    // }
 
-    let _ = wifi_spi2.start(&mut outbuf, 0);
-    for _ in 0..20 {
-        pin9.toggle();
-    }
+    // let _ = wifi_spi2.start(&mut outbuf, 0);
+    // for _ in 0..20 {
+    //     pin9.toggle();
+    // }
 
     // wifi_spi.print_read();
 
