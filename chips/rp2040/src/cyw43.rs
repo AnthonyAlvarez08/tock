@@ -7,14 +7,16 @@
 use crate::clocks::{self};
 use crate::gpio::{RPGpio, RPGpioPin};
 use crate::pio::{PIONumber, Pio, PioRxClient, PioTxClient, SMNumber, StateMachineConfiguration};
+use crate::pio_spi::PioSpi;
 use core::cell::Cell;
+use enum_primitive::cast::FromPrimitive;
 use kernel::debug;
 use kernel::deferred_call::{DeferredCall, DeferredCallClient};
 use kernel::hil;
 use kernel::hil::gpio::{Configure, Output};
 use kernel::hil::spi::cs::{ChipSelectPolar, Polarity};
-use kernel::hil::spi::SpiMasterClient;
 use kernel::hil::spi::{ClockPhase, ClockPolarity};
+use kernel::hil::spi::{SpiMaster, SpiMasterClient};
 use kernel::utilities::cells::MapCell;
 use kernel::utilities::cells::OptionalCell;
 use kernel::utilities::leasable_buffer::SubSliceMut;
@@ -27,6 +29,8 @@ use kernel::ErrorCode;
 * https://github.com/beechwoods-software/zephyr-cyw43-driver/tree/main/drivers/wifi/zephyr_cyw43/src
 * think this will have to be its own mini SPI driver
 * if need to write custom instructions
+also referencing this one
+https://github.com/jbentham/picowi/tree/main/lib
 https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2_common/hardware_pio/include/hardware/pio_instructions.h
 
 
@@ -117,6 +121,9 @@ const HALF_DUPLEX_SPI: [u16; 25] = [
     0x0051, // 23: jmp    x--, 17         side 0
     0x000f, // 24: jmp    15              side 0
 ];
+const STALL_OFFSET: u32 = 0;
+const WRITE_OFFSET: u32 = 0;
+const READ_OFFSET: u32 = 4;
 
 const SD_ON_PIN: u32 = 23;
 const SD_CMD_PIN: u32 = 24;
@@ -126,6 +133,7 @@ const SD_CS_PIN: u32 = 25;
 const SD_CLK_PIN: u32 = 29;
 const SD_IRQ_PIN: u32 = 24;
 const SD_LED_GPIO: u32 = 0;
+const SYSCLOCK_FREQ: u32 = 125_000_000;
 
 const pio_wrap_target: u32 = 0;
 const pio_wrap: u32 = 3;
@@ -225,6 +233,7 @@ const RESPONSE_DELAY_REG_F3: CYW43Register = CYW43Register {
     register_type: RegisterType::ReadWriteable,
 };
 
+// probably wont be used because it is not memory mapped io
 register_structs! {
     MMIO_CYW43Registers {
         (0x0000 => settings: ReadWrite<u16, SETTINGS::Register>),
@@ -309,11 +318,18 @@ const TEST_READ_VALUE: u32 = 0xFEEDBEAD;
 pub struct CYW43_DRIVER<'a> {
     pio: &'a Pio,
     sm_number: SMNumber,
+    clocks: OptionalCell<&'a clocks::Clocks>,
+    piospi: OptionalCell<&'a PioSpi<'a>>,
 }
 
 impl<'a> CYW43_DRIVER<'a> {
-    pub fn new(pio: &'a Pio, sm_number: SMNumber) -> Self {
-        Self { pio, sm_number }
+    pub fn new(pio: &'a Pio, sm_number: SMNumber, clocks: &'a clocks::Clocks) -> Self {
+        Self {
+            pio,
+            sm_number,
+            clocks: OptionalCell::new(clocks),
+            piospi: OptionalCell::empty(),
+        }
     }
 
     pub fn init(&self) -> Result<(), ErrorCode> {
@@ -326,11 +342,24 @@ impl<'a> CYW43_DRIVER<'a> {
 
         let mut custom_config = StateMachineConfiguration::default();
 
-        custom_config.side_set_base = SD_CLK_PIN;
-        custom_config.out_pins_base = SD_D0_PIN;
-        custom_config.in_pins_base = SD_DIN_PIN;
+        custom_config.side_set_base = 10; //SD_CLK_PIN;
+        custom_config.out_pins_base = 11; //SD_D0_PIN;
+        custom_config.in_pins_base = 12; // SD_DIN_PIN;
 
-        // TODO: maybe it wont work with the normal spi program init
+        custom_config.in_autopush = false;
+        custom_config.out_autopull = false;
+        // custom_config.in_push_threshold = 8;
+        // custom_config.out_pull_threshold = 8;
+
+        let sysclock_freq = self.clocks.map_or(SYSCLOCK_FREQ, |clocks| {
+            clocks.get_frequency(clocks::Clock::System)
+        });
+        let freq = 40_000_000;
+
+        let freq = 5 * freq;
+        custom_config.div_frac = (sysclock_freq % freq) * 256u32 / freq;
+        custom_config.div_int = sysclock_freq / freq;
+
         self.pio.spi_program_init(
             self.sm_number,
             SD_CLK_PIN,
@@ -342,99 +371,269 @@ impl<'a> CYW43_DRIVER<'a> {
         Ok(())
     }
 
+    fn make_jmp_instruction(&self, addr: u32) -> u16 {
+        //instr_bits | (arg1 << 5u) | (arg2 & 0x1fu)
+        // instr is just 000, arg1 also 000 so is actually just addr
+        (addr & 0x1f) as u16
+    }
+
     pub fn try_read(&self) -> Result<u32, ErrorCode> {
         let cmd_packet;
-        cmd_packet = match make_wifi_cmd_packet(true, false, TEST_READ_ONLY.address, 4) {
+        cmd_packet = match self.make_wifi_cmd_packet(false, false, TEST_READ_ONLY.address, 0) {
             Ok(res) => res,
             Err(err) => {
                 return Err(err);
             }
         };
 
-        match self.pio.sm(self.sm_number).push_blocking(cmd_packet) {
+        // let cs = RPGpioPin::new(RPGpio::from_u32(SD_CS_PIN).unwrap());
+        // let on = RPGpioPin::new(RPGpio::from_u32(SD_ON_PIN).unwrap());
+
+        let cs = RPGpioPin::new(RPGpio::from_u32(14).unwrap());
+        let on = RPGpioPin::new(RPGpio::from_u32(13).unwrap());
+        cs.make_output();
+        on.make_output();
+        // cs.clear();
+        cs.set();
+        on.set();
+
+        let mut cmd_array = [cmd_packet];
+
+        let subslice = SubSliceMut::new(&mut cmd_array);
+
+        // match self.piospi.write_word(cmd_packet) {
+        //     Err(er)
+        // }
+        match self.write_data(&mut cmd_array) {
             Err(err) => {
                 return Err(err);
             }
-            _ => {}
+            _ => {
+                debug!("Write Successful");
+            }
         }
 
-        let data;
-        data = match self.pio.sm(self.sm_number).pull_blocking() {
-            Ok(res) => res,
+        for i in 0..10 {
+            cs.toggle();
+            on.toggle();
+        }
+
+        match self.read_data_test() {
+            Ok(res) => {
+                debug!("wifi chip read returned");
+                for i in res {
+                    debug!("[Chip Read] {i}");
+                }
+                for i in 0..10 {
+                    cs.toggle();
+                    on.toggle();
+                }
+
+                return Ok(res[0]);
+            }
             Err(err) => {
+                for i in 0..10 {
+                    cs.toggle();
+                    on.toggle();
+                }
                 return Err(err);
             }
+        }
+    }
+
+    // TODO: change these to use subslices
+    // for now write it in a synchronous matter
+    // as that is what the example in the blog post linked above did
+    // https://github.com/jbentham/picowi/blob/main/lib/picowi_pio.c#L127
+    // TODO: make asynchronous
+    pub fn write_data(&self, data: &mut [u32]) -> Result<(), ErrorCode> {
+        // set pindirs with out = 1
+        self.config_output(true);
+
+        self.pio.sm(self.sm_number).clear_fifos();
+
+        self.pio
+            .sm(self.sm_number)
+            .exec(self.make_jmp_instruction(WRITE_OFFSET));
+
+        let mut idx = 0 as usize;
+
+        while idx < data.len() {
+            match self.pio.sm(self.sm_number).push_blocking(data[idx]) {
+                Err(err) => {
+                    debug!("writing error");
+                    return Err(err);
+                }
+                _ => {
+                    let temp = data[idx];
+                    debug!("wrote {temp}");
+                    idx += 1;
+                }
+            }
+        }
+
+        // block until tx empty
+
+        // while !self.pio.sm(self.sm_number).tx_empty() {}
+
+        // block until instruction is at the correct spot
+        // while !self.pio.read_instr(self.sm_number) & 0x1f == WRITE_OFFSET {}
+
+        // set pindirs with out = 0 i.e. data in
+        self.config_output(false);
+
+        self.pio
+            .sm(self.sm_number)
+            .exec(self.make_jmp_instruction(STALL_OFFSET));
+
+        Ok(())
+    }
+
+    pub fn read_data(
+        &self,
+        buf: SubSliceMut<'a, u32>,
+        len: usize,
+    ) -> Result<SubSliceMut<'a, u32>, ErrorCode> {
+        let mut rx_left = len;
+        // let mut tx_left = len;
+
+        self.pio
+            .sm(self.sm_number)
+            .exec(self.make_jmp_instruction(READ_OFFSET));
+
+        let buf = buf.take();
+
+        // push size of the thing
+        let _ = self.pio.sm(self.sm_number).push(rx_left as u32);
+
+        while rx_left > 0 {
+            if !self.pio.sm(self.sm_number).rx_empty() {
+                let _ = match self.pio.sm(self.sm_number).pull() {
+                    Ok(res) => {
+                        rx_left -= 1;
+                        buf[rx_left] = res;
+                        res
+                    }
+                    Err(err) => {
+                        return Err(err);
+                    }
+                };
+            }
+        }
+
+        Ok(SubSliceMut::new(buf))
+    }
+
+    pub fn read_data_test(&self) -> Result<[u32; 2], ErrorCode> {
+        const len: usize = 2;
+
+        let mut rx_left = len;
+        // let mut tx_left = len;
+
+        self.pio
+            .sm(self.sm_number)
+            .exec(self.make_jmp_instruction(READ_OFFSET));
+
+        // I know dynamic data is a no non but this is for testing
+        let mut buf = [0; len];
+
+        // push size of the thing
+        let _ = self.pio.sm(self.sm_number).push(rx_left as u32);
+
+        while rx_left > 0 {
+            if !self.pio.sm(self.sm_number).rx_empty() {
+                let _ = match self.pio.sm(self.sm_number).just_pull() {
+                    Ok(res) => {
+                        rx_left -= 1;
+                        buf[rx_left] = res;
+                        res
+                    }
+                    Err(err) => {
+                        return Err(err);
+                    }
+                };
+            }
+        }
+
+        Ok(buf)
+    }
+
+    // needed because it uses same pin for data in and data out
+    fn config_output(&self, out: bool) {
+        // pio_sm_set_pindirs_with_mask(my_pio, my_sm, out ? 1<<dat_pin : 0, 1<<dat_pin);
+        self.pio.sm(self.sm_number).set_pins_dirs(SD_D0_PIN, 1, out);
+    }
+
+    pub fn make_wifi_cmd_packet(
+        &self,
+        writing: bool,
+        incremental: bool,
+        address: u32,
+        data_length: u16,
+    ) -> Result<u32, ErrorCode> {
+        // see page 20 of the data sheet
+        // bits [0, 10] is length of the packet
+        // bits [11, 27] is register address, is 17 bits
+        // bits [28, 29] is function type, for now will leave at 00 because that is for SPI, and the others are for DMA and other things we're not using
+        // bit 30 is incremental (1) vs fixed (0) address
+        // bit 31 is read (0) or write (1)
+
+        /*
+            static inline uint32_t make_cmd(bool write, bool inc, uint32_t fn, uint32_t addr, uint32_t sz) {
+            return write << 31 | inc << 30 | fn << 28 | (addr & 0x1ffff) << 11 | sz;
+        }
+            */
+
+        const NUM_ADDRESS_BITS: u32 = 17;
+        const NUM_DATA_LENGTH_BITS: u32 = 11;
+
+        // do not let the address go out of bounds
+        if address > (1 << NUM_ADDRESS_BITS) {
+            return Err(ErrorCode::INVAL);
+        }
+
+        let mut packet: u32 = 0;
+
+        if writing {
+            packet = packet | (1 << 31);
+        }
+
+        if incremental {
+            packet = packet | (1 << 30);
+        }
+
+        packet = packet | (address << NUM_DATA_LENGTH_BITS);
+
+        if data_length > (1 << NUM_DATA_LENGTH_BITS) {
+            return Err(ErrorCode::INVAL);
+        }
+
+        packet = packet | data_length as u32;
+
+        Ok(packet)
+    }
+
+    pub fn make_wifi_cmd_packet_bytes(
+        &self,
+        writing: bool,
+        incremental: bool,
+        address: u32,
+        data_length: u16,
+    ) -> Result<[u8; 4], ErrorCode> {
+        let temp = self.make_wifi_cmd_packet(writing, incremental, address, data_length);
+
+        let packet = match temp {
+            Ok(res) => res,
+            Err(error) => return Err(error),
         };
 
-        Ok(data)
+        debug!("Packet is {packet}");
+
+        Ok([
+            (packet & 0xFF) as u8,
+            ((packet & 0xFF00) >> 8) as u8,
+            ((packet & 0xFF0000) >> 16) as u8,
+            ((packet & 0xFF000000) >> 24) as u8,
+        ])
     }
-}
-
-fn make_wifi_cmd_packet(
-    writing: bool,
-    incremental: bool,
-    address: u32,
-    data_length: u16,
-) -> Result<u32, ErrorCode> {
-    // see page 20 of the data sheet
-    // bits [0, 10] is length of the packet
-    // bits [11, 27] is register address, is 17 bits
-    // bits [28, 29] is function type, for now will leave at 00 because that is for SPI, and the others are for DMA and other things we're not using
-    // bit 30 is incremental (1) vs fixed (0) address
-    // bit 31 is read (0) or write (1)
-
-    /*
-        static inline uint32_t make_cmd(bool write, bool inc, uint32_t fn, uint32_t addr, uint32_t sz) {
-        return write << 31 | inc << 30 | fn << 28 | (addr & 0x1ffff) << 11 | sz;
-    }
-        */
-
-    const NUM_ADDRESS_BITS: u32 = 17;
-    const NUM_DATA_LENGTH_BITS: u32 = 11;
-
-    // do not let the address go out of bounds
-    if address > (1 << NUM_ADDRESS_BITS) {
-        return Err(ErrorCode::INVAL);
-    }
-
-    let mut packet: u32 = 0;
-
-    if writing {
-        packet = packet | 0x8000_0000u32;
-    }
-
-    if incremental {
-        packet = packet | 0x4000_0000u32;
-    }
-
-    packet = packet | (address << NUM_ADDRESS_BITS);
-
-    if data_length > (1 << NUM_DATA_LENGTH_BITS) {
-        return Err(ErrorCode::INVAL);
-    }
-
-    packet = packet | data_length as u32;
-
-    Ok(packet)
-}
-
-fn make_wifi_cmd_packet_bytes(
-    writing: bool,
-    incremental: bool,
-    address: u32,
-    data_length: u16,
-) -> Result<[u8; 4], ErrorCode> {
-    let temp = make_wifi_cmd_packet(writing, incremental, address, data_length);
-
-    let packet = match temp {
-        Ok(res) => res,
-        Err(error) => return Err(error),
-    };
-
-    Ok([
-        (packet & 0xFF000000 >> 24) as u8,
-        (packet & 0xFF0000 >> 16) as u8,
-        (packet & 0xFF00 >> 8) as u8,
-        (packet & 0xFF) as u8,
-    ])
 }

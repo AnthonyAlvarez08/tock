@@ -28,6 +28,11 @@ const AUTOPULL_SHIFT: usize = 24;
 // Frequency of system clock, for rate changess
 const SYSCLOCK_FREQ: u32 = 125_000_000;
 
+/*
+TODO: load one program for each one of the SPI modes and then only have one
+TODO: active at a time in the programs
+*/
+
 // Leading edge clock phase
 const SPI_CPHA0: [u16; 2] = [
     0x6101, /*  0: out    pins, 1         side 0 [1] */
@@ -143,7 +148,7 @@ impl<'a> PioSpi<'a> {
 
     // Write a word to the TX FIFO
     pub fn write_word(&self, val: u32) -> Result<(), ErrorCode> {
-        let res = self.pio.sm(self.sm_number).push(val);
+        let res = self.pio.sm(self.sm_number).push_blocking(val);
 
         match res {
             Err(err) => {
@@ -153,7 +158,7 @@ impl<'a> PioSpi<'a> {
         }
 
         if !self.pio.sm(self.sm_number).rx_empty() {
-            let _ = self.pio.sm(self.sm_number).pull();
+            let _ = self.pio.sm(self.sm_number).pull_blocking();
         }
 
         Ok(())
@@ -374,6 +379,8 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
+        self.pio.sm(self.sm_number).set_pins_dirs(24, 1, true);
+
         match self.pio.sm(self.sm_number).push(val as u32) {
             Err(error) => return Err(error),
             _ => {}
@@ -382,6 +389,8 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         if !self.pio.sm(self.sm_number).rx_empty() {
             let _ = self.pio.sm(self.sm_number).pull();
         }
+
+        self.pio.sm(self.sm_number).set_pins_dirs(24, 1, false);
 
         Ok(())
     }
@@ -393,7 +402,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             let _ = self.pio.sm(self.sm_number).push(0);
         }
 
-        data = match self.pio.sm(self.sm_number).pull() {
+        data = match self.pio.sm(self.sm_number).pull_blocking() {
             Ok(val) => val,
             Err(error) => {
                 return Err(error);

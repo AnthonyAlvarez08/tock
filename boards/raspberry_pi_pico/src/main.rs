@@ -580,10 +580,11 @@ pub unsafe fn start() -> (
     pin23.make_output();
     pin23.set_function(GpioFunction::PIO0);
     pin23.set();
+
     let pin25 = peripherals.pins.get_pin(RPGpio::GPIO25);
     pin25.make_output();
     pin25.set_function(GpioFunction::PIO0);
-    pin25.set();
+    pin25.clear(); // active low
 
     // let pio = static_init!(Pio, Pio::new_pio1());
     let _pio_spi: &'static mut PioSpi<'static> = static_init!(
@@ -591,9 +592,9 @@ pub unsafe fn start() -> (
         PioSpi::<'static>::new(
             &peripherals.pio0,
             &peripherals.clocks,
-            10, // side set = clock
-            11, // in
-            12, // out
+            29, //10, // side set = clock
+            24, //11, // in
+            24, //12, // out
             SMNumber::SM0,
             PIONumber::PIO0,
             ClockPhase::SampleLeading,
@@ -637,24 +638,92 @@ pub unsafe fn start() -> (
     _pio_spi.register();
     _receive_spi.register();
 
+    for _ in 0..16 {
+        // should show 8 peaks
+        pin7.toggle();
+    }
+
     let _wifi_spi: &'static mut CYW43_DRIVER<'static> = static_init!(
         CYW43_DRIVER,
-        CYW43_DRIVER::<'static>::new(&peripherals.pio0, SMNumber::SM1)
+        CYW43_DRIVER::<'static>::new(&peripherals.pio0, SMNumber::SM1, &peripherals.clocks)
     );
 
-    match _wifi_spi.init() {
-        Err(_err) => {
-            debug!("WiFi SPI Init Error")
+    match _wifi_spi.make_wifi_cmd_packet_bytes(false, false, 0x014, 0) {
+        Ok(buf) => {
+            for i in buf {
+                let _ = _pio_spi.write_byte(i);
+                debug!("wrote it out: {i}");
+            }
         }
-        _ => {}
+        Err(err) => {}
     }
-    match _wifi_spi.try_read() {
-        Err(_err) => {
-            debug!("Try Read Error")
+
+    let mut curr = 0 as u32;
+
+    loop {
+        match _wifi_spi.make_wifi_cmd_packet_bytes(false, false, 0x014, 0) {
+            Ok(buf) => {
+                for i in buf {
+                    let _ = _pio_spi.write_byte(i);
+                    debug!("wrote it out: {i}");
+                }
+            }
+            Err(err) => {}
         }
-        Ok(res) => {
-            debug!("This is what we read: {res}")
+
+        let i = match _pio_spi.read_byte() {
+            Ok(res) => {
+                debug!("read back {res}");
+                res
+            }
+            Err(err) => {
+                debug!("error when reading");
+                0
+            }
+        };
+
+        curr = curr << 8;
+        curr = curr | (i as u32);
+
+        // bakcwards forwards and ackwards
+        if curr == 0xfeedbead || curr == 0xb57db77f {
+            for _ in 0..100 {
+                // should show 50 peaks
+                pin8.toggle();
+            }
+            break;
         }
+    }
+
+    for _ in 0..22 {
+        // should show 11 peaks
+        pin8.toggle();
+    }
+
+    // match _wifi_spi.init() {
+    //     Err(_err) => {
+    //         debug!("WiFi SPI Init Error")
+    //     }
+    //     _ => {}
+    // }
+
+    for _ in 0..26 {
+        // should show 13 peaks
+        pin9.toggle();
+    }
+
+    // match _wifi_spi.try_read() {
+    //     Err(_err) => {
+    //         debug!("Try Read Error")
+    //     }
+    //     Ok(res) => {
+    //         debug!("This is what we read: {res}")
+    //     }
+    // }
+
+    for _ in 0..14 {
+        // should show 7 peaks
+        pin6.toggle();
     }
 
     // _receive_spi.clear_fifos();
