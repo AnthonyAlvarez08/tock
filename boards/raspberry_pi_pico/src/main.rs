@@ -53,7 +53,6 @@ use rp2040::pio::Pio;
 use rp2040::pio::{PIONumber, SMNumber, StateMachineConfiguration};
 use rp2040::pio_pwm::PioPwm;
 // use rp2040::pio_spi::PioInterruptClient;
-use rp2040::cyw43::CYW43_DRIVER;
 use rp2040::pio_spi::PioSpi;
 use rp2040::resets::Peripheral;
 use rp2040::sysinfo;
@@ -641,89 +640,6 @@ pub unsafe fn start() -> (
     for _ in 0..16 {
         // should show 8 peaks
         pin7.toggle();
-    }
-
-    let _wifi_spi: &'static mut CYW43_DRIVER<'static> = static_init!(
-        CYW43_DRIVER,
-        CYW43_DRIVER::<'static>::new(&peripherals.pio0, SMNumber::SM1, &peripherals.clocks)
-    );
-
-    match _wifi_spi.make_wifi_cmd_packet_bytes(false, false, 0x014, 0) {
-        Ok(buf) => {
-            for i in buf {
-                let _ = _pio_spi.write_byte(i);
-                debug!("wrote it out: {i}");
-            }
-        }
-        Err(err) => {}
-    }
-
-    let mut curr = 0 as u32;
-
-    loop {
-        match _wifi_spi.make_wifi_cmd_packet_bytes(false, false, 0x014, 0) {
-            Ok(buf) => {
-                for i in buf {
-                    let _ = _pio_spi.write_byte(i);
-                    debug!("wrote it out: {i}");
-                }
-            }
-            Err(err) => {}
-        }
-
-        let i = match _pio_spi.read_byte() {
-            Ok(res) => {
-                debug!("read back {res}");
-                res
-            }
-            Err(err) => {
-                debug!("error when reading");
-                0
-            }
-        };
-
-        curr = curr << 8;
-        curr = curr | (i as u32);
-
-        // bakcwards forwards and ackwards
-        if curr == 0xfeedbead || curr == 0xb57db77f {
-            for _ in 0..100 {
-                // should show 50 peaks
-                pin8.toggle();
-            }
-            break;
-        }
-    }
-
-    for _ in 0..22 {
-        // should show 11 peaks
-        pin8.toggle();
-    }
-
-    // match _wifi_spi.init() {
-    //     Err(_err) => {
-    //         debug!("WiFi SPI Init Error")
-    //     }
-    //     _ => {}
-    // }
-
-    for _ in 0..26 {
-        // should show 13 peaks
-        pin9.toggle();
-    }
-
-    // match _wifi_spi.try_read() {
-    //     Err(_err) => {
-    //         debug!("Try Read Error")
-    //     }
-    //     Ok(res) => {
-    //         debug!("This is what we read: {res}")
-    //     }
-    // }
-
-    for _ in 0..14 {
-        // should show 7 peaks
-        pin6.toggle();
     }
 
     // _receive_spi.clear_fifos();
