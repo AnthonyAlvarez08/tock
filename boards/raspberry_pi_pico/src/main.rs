@@ -32,7 +32,7 @@ use kernel::hil::gpio::{Configure, FloatingState};
 use kernel::hil::i2c::I2CMaster;
 use kernel::hil::led::LedHigh;
 use kernel::hil::pwm::Pwm;
-use kernel::hil::spi::{ClockPhase, SpiMaster};
+use kernel::hil::spi::{ClockPhase, ClockPolarity, SpiMaster};
 use kernel::hil::usb::Client;
 use kernel::platform::{KernelResources, SyscallDriverLookup};
 use kernel::scheduler::round_robin::RoundRobinSched;
@@ -591,9 +591,9 @@ pub unsafe fn start() -> (
         PioSpi::<'static>::new(
             &peripherals.pio0,
             &peripherals.clocks,
-            29, //10, // side set = clock
-            24, //11, // in
-            24, //12, // out
+            10, // side set = clock
+            11, // in
+            12, // out
             SMNumber::SM0,
             PIONumber::PIO0,
             ClockPhase::SampleLeading,
@@ -633,6 +633,11 @@ pub unsafe fn start() -> (
     let _ = _pio_spi.init();
 
     let _ = _receive_spi.init();
+
+    _pio_spi.set_polarity(ClockPolarity::IdleHigh);
+    _receive_spi.set_polarity(ClockPolarity::IdleHigh);
+    _pio_spi.set_phase(ClockPhase::SampleTrailing);
+    _receive_spi.set_phase(ClockPhase::SampleTrailing);
 
     _pio_spi.register();
     _receive_spi.register();
@@ -701,54 +706,54 @@ pub unsafe fn start() -> (
     // 24 = both input and output
     // 23 = power on
 
-    // let spi_mux = components::spi::SpiMuxComponent::new(_receive_spi)
-    //     .finalize(components::spi_mux_component_static!(PioSpi));
+    let spi_mux = components::spi::SpiMuxComponent::new(_receive_spi)
+        .finalize(components::spi_mux_component_static!(PioSpi));
 
-    // let wifi_spi = components::wifi_spi::WiFiSpiComponent::new(
-    //     spi_mux,
-    //     peripherals.pins.get_pin(RPGpio::GPIO25),
-    //     board_kernel,
-    //     capsules_extra::wifi_spi::DRIVER_NUM,
-    // )
-    // .finalize(components::wifi_spi_component_static!(
-    //     // spi type
-    //     PioSpi
-    // ));
-    // wifi_spi.register();
-    // _receive_spi.set_client(wifi_spi);
+    let wifi_spi = components::wifi_spi::WiFiSpiComponent::new(
+        spi_mux,
+        peripherals.pins.get_pin(RPGpio::GPIO25),
+        board_kernel,
+        capsules_extra::wifi_spi::DRIVER_NUM,
+    )
+    .finalize(components::wifi_spi_component_static!(
+        // spi type
+        PioSpi
+    ));
+    wifi_spi.register();
+    _receive_spi.set_client(wifi_spi);
 
-    // let spi_mux2 = components::spi::SpiMuxComponent::new(_pio_spi)
-    //     .finalize(components::spi_mux_component_static!(PioSpi));
+    let spi_mux2 = components::spi::SpiMuxComponent::new(_pio_spi)
+        .finalize(components::spi_mux_component_static!(PioSpi));
 
-    // let wifi_spi2 = components::wifi_spi::WiFiSpiComponent::new(
-    //     spi_mux2,
-    //     peripherals.pins.get_pin(RPGpio::GPIO25),
-    //     board_kernel,
-    //     capsules_extra::wifi_spi::DRIVER_NUM,
-    // )
-    // .finalize(components::wifi_spi_component_static!(
-    //     // spi type
-    //     PioSpi
-    // ));
-    // wifi_spi2.register();
-    // _pio_spi.set_client(wifi_spi2);
+    let wifi_spi2 = components::wifi_spi::WiFiSpiComponent::new(
+        spi_mux2,
+        peripherals.pins.get_pin(RPGpio::GPIO25),
+        board_kernel,
+        capsules_extra::wifi_spi::DRIVER_NUM,
+    )
+    .finalize(components::wifi_spi_component_static!(
+        // spi type
+        PioSpi
+    ));
+    wifi_spi2.register();
+    _pio_spi.set_client(wifi_spi2);
 
-    // // I temporarily made the buffer sizes 8 for the spi capsule
-    // static mut outbuf: [u8; 8] = [
-    //     0x6Au8, 0xB1u8, 0x43u8, 0xF1u8, 0x42u8, 0xE2u8, 0x79u8, 0x2Cu8,
-    // ];
-    // // _pio_spi.write_word(0xA7);
-    // let _ = wifi_spi.start(&mut outbuf, 0);
-    // for _ in 0..20 {
-    //     pin8.toggle();
-    // }
+    // I temporarily made the buffer sizes 8 for the spi capsule
+    static mut outbuf: [u8; 8] = [
+        0x6Au8, 0xB1u8, 0x43u8, 0xF1u8, 0x42u8, 0xE2u8, 0x79u8, 0x2Cu8,
+    ];
+    // _pio_spi.write_word(0xA7);
+    let _ = wifi_spi.start(&mut outbuf, 0);
+    for _ in 0..20 {
+        pin8.toggle();
+    }
 
-    // let _ = wifi_spi2.start(&mut outbuf, 0);
-    // for _ in 0..20 {
-    //     pin9.toggle();
-    // }
+    let _ = wifi_spi2.start(&mut outbuf, 0);
+    for _ in 0..20 {
+        pin9.toggle();
+    }
 
-    // wifi_spi.print_read();
+    wifi_spi.print_read();
 
     for _ in 0..40 {
         // should show 20 peaks

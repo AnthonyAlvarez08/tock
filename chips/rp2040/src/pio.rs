@@ -560,6 +560,7 @@ where
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct LoadedProgram {
     used_memory: u32,
     origin: usize,

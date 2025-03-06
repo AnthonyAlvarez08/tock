@@ -8,7 +8,9 @@
 //! Programmable Input Output (PIO) hardware test file.
 use crate::clocks::{self};
 use crate::gpio::{RPGpio, RPGpioPin};
-use crate::pio::{PIONumber, Pio, PioRxClient, PioTxClient, SMNumber, StateMachineConfiguration};
+use crate::pio::{
+    LoadedProgram, PIONumber, Pio, PioRxClient, PioTxClient, SMNumber, StateMachineConfiguration,
+};
 use core::cell::Cell;
 use kernel::debug;
 use kernel::deferred_call::{DeferredCall, DeferredCallClient};
@@ -18,6 +20,7 @@ use kernel::hil::spi::SpiMasterClient;
 use kernel::hil::spi::{ClockPhase, ClockPolarity};
 use kernel::utilities::cells::MapCell;
 use kernel::utilities::cells::OptionalCell;
+use kernel::utilities::cells::TakeCell;
 use kernel::utilities::leasable_buffer::SubSliceMut;
 use kernel::{hil, ErrorCode};
 
@@ -38,6 +41,7 @@ const SPI_CPHA0: [u16; 2] = [
     0x6101, /*  0: out    pins, 1         side 0 [1] */
     0x5101, /*  1: in     pins, 1         side 1 [1] */
 ];
+const SPI_CPHA0_IDX: usize = 0;
 
 // Trailing edge clock phase
 const SPI_CPHA1: [u16; 3] = [
@@ -45,6 +49,20 @@ const SPI_CPHA1: [u16; 3] = [
     0xb101, /* 1: mov    pins, x         side 1 [1] */
     0x4001, /* 2: in     pins, 1         side 0 */
 ];
+const SPI_CPHA1_IDX: usize = 1;
+
+const SPI_CPHA0_HIGH_CLOCK: [u16; 2] = [
+    0x7101, /*  0: out    pins, 1         side 1 [1] */
+    0x4101, /*  1: in     pins, 1         side 0 [1] */
+];
+const SPI_CPHA0_HIGH_CLOCK_IDX: usize = 2;
+
+const SPI_CPHA1_HIGH_CLOCK: [u16; 3] = [
+    0x7021, /*  0: out    x, 1            side 1 */
+    0xa101, /*  1: mov    pins, x         side 0 [1] */
+    0x5001, /*  2: in     pins, 1         side 1 */
+];
+const SPI_CPHA1_HIGH_CLOCK_IDX: usize = 3;
 
 pub struct PioSpi<'a> {
     clocks: OptionalCell<&'a clocks::Clocks>,
@@ -65,7 +83,9 @@ pub struct PioSpi<'a> {
     clock_div_int: Cell<u32>,
     clock_div_frac: Cell<u32>,
     clock_phase: Cell<ClockPhase>,
+    clock_polarity: Cell<ClockPolarity>,
     chip_select: OptionalCell<ChipSelectPolar<'a, crate::gpio::RPGpioPin<'a>>>,
+    programs: [OptionalCell<LoadedProgram>; 4],
 }
 
 #[repr(u8)]
@@ -107,7 +127,14 @@ impl<'a> PioSpi<'a> {
             clock_div_int: Cell::new(31u32), // defaults to 1 MHz
             clock_div_frac: Cell::new(64u32),
             clock_phase: Cell::new(clock_phase),
+            clock_polarity: Cell::new(ClockPolarity::IdleLow),
             chip_select: OptionalCell::empty(),
+            programs: [
+                OptionalCell::empty(),
+                OptionalCell::empty(),
+                OptionalCell::empty(),
+                OptionalCell::empty(),
+            ],
         }
     }
 
@@ -126,42 +153,6 @@ impl<'a> PioSpi<'a> {
         }
 
         empty
-    }
-
-    // Read a word from the RX FIFO
-    pub fn read_word(&self) -> Result<u32, ErrorCode> {
-        let data: u32;
-
-        if !self.pio.sm(self.sm_number).tx_full() {
-            let _ = self.pio.sm(self.sm_number).push(0);
-        }
-
-        data = match self.pio.sm(self.sm_number).pull() {
-            Ok(res) => res,
-            Err(err) => {
-                return Err(err);
-            }
-        };
-
-        Ok(data)
-    }
-
-    // Write a word to the TX FIFO
-    pub fn write_word(&self, val: u32) -> Result<(), ErrorCode> {
-        let res = self.pio.sm(self.sm_number).push_blocking(val);
-
-        match res {
-            Err(err) => {
-                return Err(err);
-            }
-            _ => {}
-        }
-
-        if !self.pio.sm(self.sm_number).rx_empty() {
-            let _ = self.pio.sm(self.sm_number).pull_blocking();
-        }
-
-        Ok(())
     }
 
     // Reads and writes to and from the buffers
@@ -249,6 +240,34 @@ impl<'a> PioSpi<'a> {
     pub fn clear_fifos(&self) {
         self.pio.sm(self.sm_number).clear_fifos();
     }
+
+    fn load_correct_program(&self) {
+        let program = if self.clock_phase.get() == ClockPhase::SampleLeading {
+            if self.clock_polarity.get() == ClockPolarity::IdleLow {
+                SPI_CPHA0_IDX
+            } else {
+                SPI_CPHA0_HIGH_CLOCK_IDX
+            }
+        } else {
+            if self.clock_polarity.get() == ClockPolarity::IdleLow {
+                SPI_CPHA1_IDX
+            } else {
+                SPI_CPHA1_HIGH_CLOCK_IDX
+            }
+        };
+
+        self.programs[program].map(|program| {
+            // self.pio.sm(self.sm_number).set_enabled(false);
+            self.pio.sm(self.sm_number).exec_program(program, true);
+            // self.pio.sm(self.sm_number).set_enabled(true);
+        });
+
+        // if let Some(prog) = self.programs[program] {
+        //     self.pio.sm(self.sm_number).set_enabled(false);
+        //     self.pio.sm(self.sm_number).exec_program(prog, true);
+        //     self.pio.sm(self.sm_number).set_enabled(true);
+        // }
+    }
 }
 
 impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
@@ -281,22 +300,58 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
         let mut wrap = 1;
 
-        let program_load_res;
+        // match self.clock_phase.get() {
+        //     ClockPhase::SampleLeading => {
+        //         program_load_res = self.pio.add_program16(None::<usize>, &SPI_CPHA0);
+        //     }
+        //     ClockPhase::SampleTrailing => {
+        //         program_load_res = self.pio.add_program16(None::<usize>, &SPI_CPHA1);
+        //         wrap = 2;
+        //         debug!("trailing");
+        //     }
+        // }
 
-        match self.clock_phase.get() {
-            ClockPhase::SampleLeading => {
-                program_load_res = self.pio.add_program16(None::<usize>, &SPI_CPHA0);
-            }
-            ClockPhase::SampleTrailing => {
-                program_load_res = self.pio.add_program16(None::<usize>, &SPI_CPHA1);
-                wrap = 2;
-                debug!("trailing");
-            }
-        }
+        // match program_load_res {
+        //     Err(error) => return Err(ErrorCode::FAIL),
+        //     _ => {}
+        // }
 
-        match program_load_res {
-            Err(error) => return Err(ErrorCode::FAIL),
-            _ => {}
+        // load all the programs
+        {
+            match self.pio.add_program16(None::<usize>, &SPI_CPHA0) {
+                Ok(res) => {
+                    self.programs[SPI_CPHA0_IDX].insert(Some(res));
+                }
+
+                // default one so this one returns an error
+                Err(error) => return Err(ErrorCode::FAIL),
+            }
+
+            match self.pio.add_program16(None::<usize>, &SPI_CPHA1) {
+                Ok(res) => {
+                    self.programs[SPI_CPHA1_IDX].insert(Some(res));
+                }
+
+                // default one so this one returns an error
+                Err(error) => return Err(ErrorCode::FAIL),
+            }
+
+            // match self.pio.add_program16(None::<usize>, &SPI_CPHA0_HIGH_CLOCK) {
+            //     Ok(res) => {
+            //         self.programs[SPI_CPHA0_HIGH_CLOCK_IDX].insert(Some(res));
+            //     }
+
+            //     Err(error) => {} //return Err(ErrorCode::FAIL),
+            // }
+
+            match self.pio.add_program16(None::<usize>, &SPI_CPHA1_HIGH_CLOCK) {
+                Ok(res) => {
+                    self.programs[SPI_CPHA1_HIGH_CLOCK_IDX].insert(Some(res));
+                }
+
+                Err(error) => {} //return Err(ErrorCode::FAIL),
+            }
+            self.load_correct_program();
         }
 
         let mut custom_config = StateMachineConfiguration::default();
@@ -379,9 +434,8 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
-        self.pio.sm(self.sm_number).set_pins_dirs(24, 1, true);
-
-        match self.pio.sm(self.sm_number).push(val as u32) {
+        // one byte operations can be synchronous
+        match self.pio.sm(self.sm_number).push_blocking(val as u32) {
             Err(error) => return Err(error),
             _ => {}
         }
@@ -389,8 +443,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         if !self.pio.sm(self.sm_number).rx_empty() {
             let _ = self.pio.sm(self.sm_number).pull();
         }
-
-        self.pio.sm(self.sm_number).set_pins_dirs(24, 1, false);
 
         Ok(())
     }
@@ -402,6 +454,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             let _ = self.pio.sm(self.sm_number).push(0);
         }
 
+        // one byte operations can be synchronous
         data = match self.pio.sm(self.sm_number).pull_blocking() {
             Ok(val) => val,
             Err(error) => {
@@ -417,14 +470,15 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     fn read_write_byte(&self, val: u8) -> Result<u8, ErrorCode> {
         let mut data: u32;
 
-        match self.pio.sm(self.sm_number).push(val as u32) {
+        // one byte operations can be synchronous
+        match self.pio.sm(self.sm_number).push_blocking(val as u32) {
             Err(err) => {
                 return Err(err);
             }
             _ => {}
         }
 
-        data = match self.pio.sm(self.sm_number).pull() {
+        data = match self.pio.sm(self.sm_number).pull_blocking() {
             Ok(val) => val,
             Err(error) => {
                 return Err(error);
@@ -507,16 +561,21 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
     fn set_polarity(&self, polarity: ClockPolarity) -> Result<(), ErrorCode> {
         // unimplemented!("Polarity is fixed");
+        self.clock_polarity.replace(polarity);
+        self.load_correct_program();
         Ok(())
     }
 
     fn get_polarity(&self) -> ClockPolarity {
-        ClockPolarity::IdleHigh
+        self.clock_polarity.get()
     }
 
     fn set_phase(&self, phase: ClockPhase) -> Result<(), ErrorCode> {
         // TODO: how to channge program in the thing
         // unimplemented!("Not implemented yet");
+
+        self.clock_phase.replace(phase);
+        self.load_correct_program();
         Ok(())
     }
 
