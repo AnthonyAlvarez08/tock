@@ -1175,7 +1175,7 @@ impl StateMachine {
         Ok(self.registers.rxf[self.sm_number as usize].read(RXFx::RXF))
     }
 
-    // Immediately reads a word of data from a state machine's RX FIFO
+    /// Immediately reads a word of data from a state machine's RX FIFO
     pub fn just_pull(&self) -> Result<u32, ErrorCode> {
         Ok(self.registers.rxf[self.sm_number as usize].read(RXFx::RXF))
     }
@@ -1796,20 +1796,16 @@ mod examples {
         ) {
             let sm = &self.sms[sm_number as usize];
             sm.config(config);
-            // self.pio_number = pio_number;
             self.gpio_init(&RPGpioPin::new(RPGpio::from_u32(side_set_pin)));
             self.gpio_init(&RPGpioPin::new(RPGpio::from_u32(in_pin)));
             self.gpio_init(&RPGpioPin::new(RPGpio::from_u32(out_pin)));
-
             sm.set_enabled(false);
 
-            // IMPORTANT
-            // make the sideset pin an output pin to finagle with its settings
-            // then make it a side set pin
-            // ALSO make sure to do all of this BEFORE setting the outpin as an outpin
+            // Important: make the sideset pin an output pin then make it a side set pin
+            // and make sure to do all of this BEFORE setting the outpin as an outpin
             sm.set_out_pins(side_set_pin, 1);
             sm.set_pins_dirs(side_set_pin, 1, true);
-            sm.set_side_set_pins(side_set_pin, 1, false, false); // do not switch pin dirs again, it will mess with the output settings
+            sm.set_side_set_pins(side_set_pin, 1, false, false); // Do not switch pin dirs again, it will mess with the output settings
 
             sm.set_pins_dirs(out_pin, 1, true);
             sm.set_out_pins(out_pin, config.out_pins_count);

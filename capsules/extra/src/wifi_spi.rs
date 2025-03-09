@@ -94,11 +94,10 @@ impl<'a, Spi: SpiMasterDevice<'a>> WiFiSpi<'a, Spi> {
     }
 
     pub fn configure(&self) -> Result<(), ErrorCode> {
-        self.spi_master.configure(
-            ClockPolarity::IdleHigh,
-            ClockPhase::SampleLeading,
-            5_000_000,
-        )
+        // set to 5MHz in the future
+        // kinda hard to sync up to spi masters on the same chip so clock rate is at 5khz
+        self.spi_master
+            .configure(ClockPolarity::IdleLow, ClockPhase::SampleLeading, 2_000)
     }
 }
 

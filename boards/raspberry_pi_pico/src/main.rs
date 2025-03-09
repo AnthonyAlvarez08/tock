@@ -634,10 +634,10 @@ pub unsafe fn start() -> (
 
     let _ = _receive_spi.init();
 
-    _pio_spi.set_polarity(ClockPolarity::IdleHigh);
-    _receive_spi.set_polarity(ClockPolarity::IdleHigh);
-    _pio_spi.set_phase(ClockPhase::SampleTrailing);
-    _receive_spi.set_phase(ClockPhase::SampleTrailing);
+    // let _ = _pio_spi.set_phase(ClockPhase::SampleTrailing);
+    // let _ = _receive_spi.set_phase(ClockPhase::SampleTrailing);
+    // let _ = _pio_spi.set_polarity(ClockPolarity::IdleHigh);
+    // let _ = _receive_spi.set_polarity(ClockPolarity::IdleHigh);
 
     _pio_spi.register();
     _receive_spi.register();
@@ -742,13 +742,16 @@ pub unsafe fn start() -> (
     static mut outbuf: [u8; 8] = [
         0x6Au8, 0xB1u8, 0x43u8, 0xF1u8, 0x42u8, 0xE2u8, 0x79u8, 0x2Cu8,
     ];
+
+    // ['0x82', '0x39', '0x16', '0x47', '0x5d', '0xc8', '0xc2', '0x29']
+    static mut outbuf2: [u8; 8] = [130u8, 57u8, 22u8, 71u8, 93u8, 200u8, 194u8, 41u8];
     // _pio_spi.write_word(0xA7);
     let _ = wifi_spi.start(&mut outbuf, 0);
     for _ in 0..20 {
         pin8.toggle();
     }
 
-    let _ = wifi_spi2.start(&mut outbuf, 0);
+    let _ = wifi_spi2.start(&mut outbuf2, 0);
     for _ in 0..20 {
         pin9.toggle();
     }

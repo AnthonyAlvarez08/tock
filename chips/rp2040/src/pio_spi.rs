@@ -37,6 +37,7 @@ TODO: active at a time in the programs
 */
 
 // Leading edge clock phase
+// idle low clock
 const SPI_CPHA0: [u16; 2] = [
     0x6101, /*  0: out    pins, 1         side 0 [1] */
     0x5101, /*  1: in     pins, 1         side 1 [1] */
@@ -44,6 +45,7 @@ const SPI_CPHA0: [u16; 2] = [
 const SPI_CPHA0_IDX: usize = 0;
 
 // Trailing edge clock phase
+// idle low clock
 const SPI_CPHA1: [u16; 3] = [
     0x6021, /* 0: out    x, 1            side 0 */
     0xb101, /* 1: mov    pins, x         side 1 [1] */
@@ -51,12 +53,16 @@ const SPI_CPHA1: [u16; 3] = [
 ];
 const SPI_CPHA1_IDX: usize = 1;
 
+// Leading edge clock phase
+// idle high clock
 const SPI_CPHA0_HIGH_CLOCK: [u16; 2] = [
     0x7101, /*  0: out    pins, 1         side 1 [1] */
     0x4101, /*  1: in     pins, 1         side 0 [1] */
 ];
 const SPI_CPHA0_HIGH_CLOCK_IDX: usize = 2;
 
+// Trailing edge clock phase
+// idle high clock
 const SPI_CPHA1_HIGH_CLOCK: [u16; 3] = [
     0x7021, /*  0: out    x, 1            side 1 */
     0xa101, /*  1: mov    pins, x         side 0 [1] */
@@ -86,6 +92,7 @@ pub struct PioSpi<'a> {
     clock_polarity: Cell<ClockPolarity>,
     chip_select: OptionalCell<ChipSelectPolar<'a, crate::gpio::RPGpioPin<'a>>>,
     programs: [OptionalCell<LoadedProgram>; 4],
+    is_program_loaded: Cell<bool>,
 }
 
 #[repr(u8)]
@@ -135,6 +142,7 @@ impl<'a> PioSpi<'a> {
                 OptionalCell::empty(),
                 OptionalCell::empty(),
             ],
+            is_program_loaded: Cell::new(false),
         }
     }
 
@@ -195,35 +203,15 @@ impl<'a> PioSpi<'a> {
                 if self.tx_position.get() >= self.len.get()
                     && self.rx_position.get() >= self.len.get()
                 {
-                    // printing tx contents
-                    debug!("Printing TX Buffer");
-                    let mut idx = 0;
-                    while idx < buf.len() {
-                        let temp = buf[idx];
-                        debug!("[TX buf] {temp}");
-                        idx += 1;
-                    }
-
-                    // printing rx contents
-                    debug!("Printing RX Buffer");
-                    self.rx_buffer.map(|buf| {
-                        let mut idx = 0;
-                        while idx < buf.len() {
-                            let temp = buf[idx];
-                            debug!("[RX buf] {temp}");
-                            idx += 1;
-                        }
-                    });
-
                     self.state.set(PioSpiState::Free);
                     self.len.set(0);
                     self.tx_position.set(0);
                     self.rx_position.set(0);
                     self.deferred_call.set();
-
                     break;
                 }
 
+                // If any read/write errors
                 if errors {
                     break;
                 }
@@ -241,33 +229,67 @@ impl<'a> PioSpi<'a> {
         self.pio.sm(self.sm_number).clear_fifos();
     }
 
-    fn load_correct_program(&self) {
-        let program = if self.clock_phase.get() == ClockPhase::SampleLeading {
+    // Loads the correct PIO program based on clock phase and polarity
+    fn load_program(&self) -> Result<(), ErrorCode> {
+        self.pio.sm(self.sm_number).set_enabled(false);
+
+        let program: &[u16] = if self.clock_phase.get() == ClockPhase::SampleLeading {
             if self.clock_polarity.get() == ClockPolarity::IdleLow {
-                SPI_CPHA0_IDX
+                &SPI_CPHA0
             } else {
-                SPI_CPHA0_HIGH_CLOCK_IDX
+                &SPI_CPHA0_HIGH_CLOCK
             }
         } else {
             if self.clock_polarity.get() == ClockPolarity::IdleLow {
-                SPI_CPHA1_IDX
+                &SPI_CPHA1
             } else {
-                SPI_CPHA1_HIGH_CLOCK_IDX
+                &SPI_CPHA1_HIGH_CLOCK
             }
         };
 
-        self.programs[program].map(|program| {
-            // self.pio.sm(self.sm_number).set_enabled(false);
-            self.pio.sm(self.sm_number).exec_program(program, true);
-            // self.pio.sm(self.sm_number).set_enabled(true);
-        });
+        match self.pio.add_program16(None::<usize>, program) {
+            Ok(res) => {}
 
-        // if let Some(prog) = self.programs[program] {
-        //     self.pio.sm(self.sm_number).set_enabled(false);
-        //     self.pio.sm(self.sm_number).exec_program(prog, true);
-        //     self.pio.sm(self.sm_number).set_enabled(true);
-        // }
+            // default one so this one returns an error
+            Err(error) => return Err(ErrorCode::FAIL),
+        }
+
+        self.pio.sm(self.sm_number).clkdiv_restart();
+        self.pio.sm(self.sm_number).set_enabled(true);
+
+        self.is_program_loaded.set(true);
+        Ok(())
     }
+
+    // Load the correct PIO program based on Clock Phase and Polarity
+    // fn load_correct_program(&self) {
+    //     let program = if self.clock_phase.get() == ClockPhase::SampleLeading {
+    //         if self.clock_polarity.get() == ClockPolarity::IdleLow {
+    //             SPI_CPHA0_IDX
+    //         } else {
+    //             SPI_CPHA0_HIGH_CLOCK_IDX
+    //         }
+    //     } else {
+    //         if self.clock_polarity.get() == ClockPolarity::IdleLow {
+    //             SPI_CPHA1_IDX
+    //         } else {
+    //             SPI_CPHA1_HIGH_CLOCK_IDX
+    //         }
+    //     };
+
+    //     self.programs[program].map(|program| {
+    //         // self.pio.sm(self.sm_number).set_enabled(false);
+    //         self.pio.sm(self.sm_number).exec_program(program, true);
+    //         self.pio.sm(self.sm_number).clkdiv_restart();
+    //         // self.pio.sm(self.sm_number).set_enabled(true);
+    //     });
+
+    //     // if let Some(prog) = self.programs[program] {
+    //     //     self.pio.sm(self.sm_number).set_enabled(false);
+    //     //     self.pio.sm(self.sm_number).exec_program(prog, true);
+    //     //     self.pio.sm(self.sm_number).set_enabled(true);
+    //     // }
+    // }
 }
 
 impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
@@ -292,49 +314,32 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         ; Clock phase = 1: data transitions on the leading edge of each SCK pulse, and
         ; is captured on the trailing edge.
 
-
-
         */
 
         self.pio.init();
 
-        let mut wrap = 1;
-
-        // match self.clock_phase.get() {
-        //     ClockPhase::SampleLeading => {
-        //         program_load_res = self.pio.add_program16(None::<usize>, &SPI_CPHA0);
-        //     }
-        //     ClockPhase::SampleTrailing => {
-        //         program_load_res = self.pio.add_program16(None::<usize>, &SPI_CPHA1);
-        //         wrap = 2;
-        //         debug!("trailing");
-        //     }
-        // }
-
-        // match program_load_res {
-        //     Err(error) => return Err(ErrorCode::FAIL),
-        //     _ => {}
-        // }
+        let mut wrap = 2;
 
         // load all the programs
         {
-            match self.pio.add_program16(None::<usize>, &SPI_CPHA0) {
-                Ok(res) => {
-                    self.programs[SPI_CPHA0_IDX].insert(Some(res));
-                }
+            // match self.pio.add_program16(None::<usize>, &SPI_CPHA0) {
+            //     Ok(res) => {
+            //         self.programs[SPI_CPHA0_IDX].insert(Some(res));
+            //     }
 
-                // default one so this one returns an error
-                Err(error) => return Err(ErrorCode::FAIL),
-            }
+            //     // default one so this one returns an error
+            //     Err(error) => return Err(ErrorCode::FAIL),
+            // }
 
-            match self.pio.add_program16(None::<usize>, &SPI_CPHA1) {
-                Ok(res) => {
-                    self.programs[SPI_CPHA1_IDX].insert(Some(res));
-                }
+            // match self.pio.add_program16(None::<usize>, &SPI_CPHA1) {
+            //     Ok(res) => {
+            //         self.programs[SPI_CPHA1_IDX].insert(Some(res));
+            //         wrap = 2;
+            //     }
 
-                // default one so this one returns an error
-                Err(error) => return Err(ErrorCode::FAIL),
-            }
+            //     // default one so this one returns an error
+            //     Err(error) => return Err(ErrorCode::FAIL),
+            // }
 
             // match self.pio.add_program16(None::<usize>, &SPI_CPHA0_HIGH_CLOCK) {
             //     Ok(res) => {
@@ -344,14 +349,15 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             //     Err(error) => {} //return Err(ErrorCode::FAIL),
             // }
 
-            match self.pio.add_program16(None::<usize>, &SPI_CPHA1_HIGH_CLOCK) {
-                Ok(res) => {
-                    self.programs[SPI_CPHA1_HIGH_CLOCK_IDX].insert(Some(res));
-                }
+            // match self.pio.add_program16(None::<usize>, &SPI_CPHA1_HIGH_CLOCK) {
+            //     Ok(res) => {
+            //         self.programs[SPI_CPHA1_HIGH_CLOCK_IDX].insert(Some(res));
+            //         wrap = 2;
+            //     }
 
-                Err(error) => {} //return Err(ErrorCode::FAIL),
-            }
-            self.load_correct_program();
+            //     Err(error) => {} //return Err(ErrorCode::FAIL),
+            // }
+            // self.load_correct_program();
         }
 
         let mut custom_config = StateMachineConfiguration::default();
@@ -359,7 +365,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         custom_config.div_int = self.clock_div_int.get();
         custom_config.div_frac = self.clock_div_frac.get();
 
-        // should be able to work on bytes according to the PIO manual
         custom_config.in_push_threshold = 8;
         custom_config.out_pull_threshold = 8;
 
@@ -388,8 +393,8 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
     fn is_busy(&self) -> bool {
         match self.state.get() {
-            PioSpiState::Free => true,
-            _ => false,
+            PioSpiState::Free => false,
+            _ => true,
         }
     }
 
@@ -405,14 +410,20 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             Option<SubSliceMut<'static, u8>>,
         ),
     > {
+        // Make sure the program is loaded
+        if !self.is_program_loaded.get() {
+            match self.load_program() {
+                Ok(()) => {}
+                Err(error) => return Err((ErrorCode::FAIL, write_buffer, read_buffer)),
+            }
+        }
+
         if write_buffer.len() < 1 {
             return Err((ErrorCode::INVAL, write_buffer, read_buffer));
         }
 
-        // if there is a chip select, make sure it is on
-        self.chip_select.map(|p| {
-            p.activate();
-        });
+        // If there is a chip select, make sure it is on
+        self.hold_low();
 
         // Keep track of the new buffers
         self.len.replace(write_buffer.len());
@@ -425,16 +436,24 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             self.rx_buffer.replace(readbuf);
             self.state.replace(PioSpiState::ReadingWriting);
             self.rx_position.set(0);
-            debug!("will read");
         }
 
+        // Begin reading/writing to/from buffers
         self.read_write_buffers();
 
         Ok(())
     }
 
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
-        // one byte operations can be synchronous
+        // Make sure the program is loaded
+        if !self.is_program_loaded.get() {
+            match self.load_program() {
+                Ok(()) => {}
+                Err(error) => return Err(ErrorCode::FAIL),
+            }
+        }
+
+        // One byte operations can be synchronous
         match self.pio.sm(self.sm_number).push_blocking(val as u32) {
             Err(error) => return Err(error),
             _ => {}
@@ -448,13 +467,21 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn read_byte(&self) -> Result<u8, ErrorCode> {
+        // Make sure the program is loaded
+        if !self.is_program_loaded.get() {
+            match self.load_program() {
+                Ok(()) => {}
+                Err(error) => return Err(ErrorCode::FAIL),
+            }
+        }
+
         let mut data: u32;
 
         if !self.pio.sm(self.sm_number).tx_full() {
             let _ = self.pio.sm(self.sm_number).push(0);
         }
 
-        // one byte operations can be synchronous
+        // One byte operations can be synchronous
         data = match self.pio.sm(self.sm_number).pull_blocking() {
             Ok(val) => val,
             Err(error) => {
@@ -468,9 +495,17 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn read_write_byte(&self, val: u8) -> Result<u8, ErrorCode> {
+        // Make sure the program is loaded
+        if !self.is_program_loaded.get() {
+            match self.load_program() {
+                Ok(()) => {}
+                Err(error) => return Err(ErrorCode::FAIL),
+            }
+        }
+
         let mut data: u32;
 
-        // one byte operations can be synchronous
+        // One byte operations can be synchronous
         match self.pio.sm(self.sm_number).push_blocking(val as u32) {
             Err(err) => {
                 return Err(err);
@@ -508,11 +543,11 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             clocks.get_frequency(clocks::Clock::System)
         });
 
-        // program does two instructions per every SPI clock peak
-        // still runs at half of rate after that for some reason so multiply again by two
+        // Program does two instructions per every SPI clock peak
+        // Still runs at half of rate after that so multiply again by two
         let rate = rate * 4;
 
-        // obviously the max clock rate is the sys clock
+        // Max clock rate is the sys clock
         if rate > sysclock_freq {
             return Err(ErrorCode::INVAL);
         }
@@ -532,7 +567,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         self.clock_div_int.replace(divint);
         self.clock_div_frac.replace(divfrac);
 
-        // reinit the PIO so it updates the times
+        // Reinit the PIO so it updates the times
         self.pio.sm(self.sm_number).set_enabled(false);
         self.pio
             .sm(self.sm_number)
@@ -560,9 +595,8 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn set_polarity(&self, polarity: ClockPolarity) -> Result<(), ErrorCode> {
-        // unimplemented!("Polarity is fixed");
         self.clock_polarity.replace(polarity);
-        self.load_correct_program();
+        // self.load_correct_program();
         Ok(())
     }
 
@@ -571,11 +605,8 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn set_phase(&self, phase: ClockPhase) -> Result<(), ErrorCode> {
-        // TODO: how to channge program in the thing
-        // unimplemented!("Not implemented yet");
-
         self.clock_phase.replace(phase);
-        self.load_correct_program();
+        // self.load_correct_program();
         Ok(())
     }
 
@@ -585,18 +616,35 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
     fn hold_low(&self) {
         self.chip_select.map(|p| {
-            p.activate();
+            // just treat it as active low regardless of what they passed in
+            match p.polarity {
+                Polarity::Low => {
+                    p.activate();
+                }
+                _ => {
+                    p.deactivate();
+                }
+            }
         });
     }
 
     fn release_low(&self) {
         self.chip_select.map(|p| {
-            p.deactivate();
+            // just treat it as active low regardless of what they passed in
+            match p.polarity {
+                Polarity::Low => {
+                    p.deactivate();
+                }
+                _ => {
+                    p.activate();
+                }
+            }
         });
     }
 }
 
 impl<'a> PioTxClient for PioSpi<'a> {
+    // Buffer space availble, so send next byte
     fn on_buffer_space_available(&self) {
         self.tx_position.set(self.tx_position.get() + 1);
         match self.state.get() {
@@ -605,33 +653,20 @@ impl<'a> PioTxClient for PioSpi<'a> {
             }
             _ => {}
         }
-
-        let pin = RPGpioPin::new(RPGpio::GPIO9);
-        pin.make_output();
-        for i in 0..16 {
-            pin.toggle();
-        }
     }
 }
 
 impl<'a> PioRxClient for PioSpi<'a> {
+    // Data received, so update buffer and continue reading/writing
     fn on_data_received(&self, data: u32) {
-        let pin = RPGpioPin::new(RPGpio::GPIO9);
-        pin.make_output();
-        for i in 0..16 {
-            pin.toggle();
-        }
         let data = data >> AUTOPULL_SHIFT;
-        debug!("INSIDE INTERRUPT HANDLER Received data {data}");
 
-        // add to rx buffer and update the rx index
         if self.len.get() > self.rx_position.get() {
             self.rx_buffer.map(|buf| {
                 buf[self.rx_position.get()] = data as u8;
                 self.rx_position.set(self.rx_position.get() + 1);
             });
         }
-
         match self.state.get() {
             PioSpiState::Reading | PioSpiState::ReadingWriting => {
                 self.read_write_buffers();
@@ -642,14 +677,10 @@ impl<'a> PioRxClient for PioSpi<'a> {
 }
 
 impl<'a> DeferredCallClient for PioSpi<'a> {
+    // Transfer ownership to client
     fn handle_deferred_call(&self) {
-        // called when we are done transfering
-
         self.state.set(PioSpiState::Free);
 
-        debug!("Transferring ownership");
-        debug!("Calling client in deferred call");
-        // Transfer ownership to client
         if let Some(tx_buffer) = self.tx_buffer.take() {
             self.client.map(|client| {
                 client.read_write_done(tx_buffer, self.rx_buffer.take(), Ok(0 as usize));
