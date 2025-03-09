@@ -28,52 +28,39 @@ use kernel::{hil, ErrorCode};
 // rather than words, values read in have to be bitshifted by 24
 const AUTOPULL_SHIFT: usize = 24;
 
-// Frequency of system clock, for rate changess
+// Frequency of system clock, for rate changes
 const SYSCLOCK_FREQ: u32 = 125_000_000;
 
-/*
-TODO: load one program for each one of the SPI modes and then only have one
-TODO: active at a time in the programs
-*/
-
-// Leading edge clock phase
-// idle low clock
+// Leading edge clock phase + Idle low clock
 const SPI_CPHA0: [u16; 2] = [
     0x6101, /*  0: out    pins, 1         side 0 [1] */
     0x5101, /*  1: in     pins, 1         side 1 [1] */
 ];
-const SPI_CPHA0_IDX: usize = 0;
 
-// Trailing edge clock phase
-// idle low clock
+// Trailing edge clock phase + Idle low clock
 const SPI_CPHA1: [u16; 3] = [
     0x6021, /* 0: out    x, 1            side 0 */
     0xb101, /* 1: mov    pins, x         side 1 [1] */
     0x4001, /* 2: in     pins, 1         side 0 */
 ];
-const SPI_CPHA1_IDX: usize = 1;
 
-// Leading edge clock phase
-// idle high clock
+// Leading edge clock phase + Idle high clock
 const SPI_CPHA0_HIGH_CLOCK: [u16; 2] = [
     0x7101, /*  0: out    pins, 1         side 1 [1] */
     0x4101, /*  1: in     pins, 1         side 0 [1] */
 ];
-const SPI_CPHA0_HIGH_CLOCK_IDX: usize = 2;
 
-// Trailing edge clock phase
-// idle high clock
+// Trailing edge clock phase + Idle high clock
 const SPI_CPHA1_HIGH_CLOCK: [u16; 3] = [
     0x7021, /*  0: out    x, 1            side 1 */
     0xa101, /*  1: mov    pins, x         side 0 [1] */
     0x5001, /*  2: in     pins, 1         side 1 */
 ];
-const SPI_CPHA1_HIGH_CLOCK_IDX: usize = 3;
 
 pub struct PioSpi<'a> {
     clocks: OptionalCell<&'a clocks::Clocks>,
     pio: &'a Pio,
-    side_set_pin: u32,
+    clock_pin: u32,
     out_pin: u32,
     in_pin: u32,
     sm_number: SMNumber,
@@ -91,7 +78,6 @@ pub struct PioSpi<'a> {
     clock_phase: Cell<ClockPhase>,
     clock_polarity: Cell<ClockPolarity>,
     chip_select: OptionalCell<ChipSelectPolar<'a, crate::gpio::RPGpioPin<'a>>>,
-    programs: [OptionalCell<LoadedProgram>; 4],
     is_program_loaded: Cell<bool>,
 }
 
@@ -108,17 +94,16 @@ impl<'a> PioSpi<'a> {
     pub fn new(
         pio: &'a Pio,
         clocks: &'a clocks::Clocks,
-        side_set_pin: u32,
+        clock_pin: u32,
         in_pin: u32,
         out_pin: u32,
         sm_number: SMNumber,
         pio_number: PIONumber,
-        clock_phase: ClockPhase,
     ) -> Self {
         Self {
             clocks: OptionalCell::new(clocks),
             pio: pio,
-            side_set_pin: side_set_pin,
+            clock_pin: clock_pin,
             in_pin: in_pin,
             out_pin: out_pin,
             sm_number: sm_number,
@@ -133,15 +118,9 @@ impl<'a> PioSpi<'a> {
             deferred_call: DeferredCall::new(),
             clock_div_int: Cell::new(31u32), // defaults to 1 MHz
             clock_div_frac: Cell::new(64u32),
-            clock_phase: Cell::new(clock_phase),
+            clock_phase: Cell::new(ClockPhase::SampleLeading), // defaults to mode 0 0
             clock_polarity: Cell::new(ClockPolarity::IdleLow),
             chip_select: OptionalCell::empty(),
-            programs: [
-                OptionalCell::empty(),
-                OptionalCell::empty(),
-                OptionalCell::empty(),
-                OptionalCell::empty(),
-            ],
             is_program_loaded: Cell::new(false),
         }
     }
@@ -163,7 +142,7 @@ impl<'a> PioSpi<'a> {
         empty
     }
 
-    // Reads and writes to and from the buffers
+    // Helper function to read and writes to and from the buffers
     fn read_write_buffers(&self) {
         self.tx_buffer.map(|buf| {
             let temp = self.len.get();
@@ -229,7 +208,7 @@ impl<'a> PioSpi<'a> {
         self.pio.sm(self.sm_number).clear_fifos();
     }
 
-    // Loads the correct PIO program based on clock phase and polarity
+    // Load the correct PIO program based on clock phase and polarity
     fn load_program(&self) -> Result<(), ErrorCode> {
         self.pio.sm(self.sm_number).set_enabled(false);
 
@@ -248,10 +227,10 @@ impl<'a> PioSpi<'a> {
         };
 
         match self.pio.add_program16(None::<usize>, program) {
-            Ok(res) => {}
+            Ok(_res) => {}
 
             // default one so this one returns an error
-            Err(error) => return Err(ErrorCode::FAIL),
+            Err(_error) => return Err(ErrorCode::FAIL),
         }
 
         self.pio.sm(self.sm_number).clkdiv_restart();
@@ -260,125 +239,36 @@ impl<'a> PioSpi<'a> {
         self.is_program_loaded.set(true);
         Ok(())
     }
-
-    // Load the correct PIO program based on Clock Phase and Polarity
-    // fn load_correct_program(&self) {
-    //     let program = if self.clock_phase.get() == ClockPhase::SampleLeading {
-    //         if self.clock_polarity.get() == ClockPolarity::IdleLow {
-    //             SPI_CPHA0_IDX
-    //         } else {
-    //             SPI_CPHA0_HIGH_CLOCK_IDX
-    //         }
-    //     } else {
-    //         if self.clock_polarity.get() == ClockPolarity::IdleLow {
-    //             SPI_CPHA1_IDX
-    //         } else {
-    //             SPI_CPHA1_HIGH_CLOCK_IDX
-    //         }
-    //     };
-
-    //     self.programs[program].map(|program| {
-    //         // self.pio.sm(self.sm_number).set_enabled(false);
-    //         self.pio.sm(self.sm_number).exec_program(program, true);
-    //         self.pio.sm(self.sm_number).clkdiv_restart();
-    //         // self.pio.sm(self.sm_number).set_enabled(true);
-    //     });
-
-    //     // if let Some(prog) = self.programs[program] {
-    //     //     self.pio.sm(self.sm_number).set_enabled(false);
-    //     //     self.pio.sm(self.sm_number).exec_program(prog, true);
-    //     //     self.pio.sm(self.sm_number).set_enabled(true);
-    //     // }
-    // }
 }
 
 impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     type ChipSelect = ChipSelectPolar<'a, crate::gpio::RPGpioPin<'a>>;
 
     fn init(&self) -> Result<(), ErrorCode> {
-        /*
-
-        implements this program for now
-        https://github.com/raspberrypi/pico-examples/blob/master/pio/spi/spi.pio
-
-        assembly found here I think on line 63
-
-
-        .pio_version 0 // only requires PIO version 0
-        https://github.com/zephyrproject-rtos/zephyr/blob/main/drivers/spi/spi_rpi_pico_pio.c
-
-
-        ; Clock phase = 0: data is captured on the leading edge of each SCK pulse, and
-        ; transitions on the trailing edge, or some time before the first leading edge.
-
-        ; Clock phase = 1: data transitions on the leading edge of each SCK pulse, and
-        ; is captured on the trailing edge.
-
-        */
-
         self.pio.init();
-
-        let mut wrap = 2;
-
-        // load all the programs
-        {
-            // match self.pio.add_program16(None::<usize>, &SPI_CPHA0) {
-            //     Ok(res) => {
-            //         self.programs[SPI_CPHA0_IDX].insert(Some(res));
-            //     }
-
-            //     // default one so this one returns an error
-            //     Err(error) => return Err(ErrorCode::FAIL),
-            // }
-
-            // match self.pio.add_program16(None::<usize>, &SPI_CPHA1) {
-            //     Ok(res) => {
-            //         self.programs[SPI_CPHA1_IDX].insert(Some(res));
-            //         wrap = 2;
-            //     }
-
-            //     // default one so this one returns an error
-            //     Err(error) => return Err(ErrorCode::FAIL),
-            // }
-
-            // match self.pio.add_program16(None::<usize>, &SPI_CPHA0_HIGH_CLOCK) {
-            //     Ok(res) => {
-            //         self.programs[SPI_CPHA0_HIGH_CLOCK_IDX].insert(Some(res));
-            //     }
-
-            //     Err(error) => {} //return Err(ErrorCode::FAIL),
-            // }
-
-            // match self.pio.add_program16(None::<usize>, &SPI_CPHA1_HIGH_CLOCK) {
-            //     Ok(res) => {
-            //         self.programs[SPI_CPHA1_HIGH_CLOCK_IDX].insert(Some(res));
-            //         wrap = 2;
-            //     }
-
-            //     Err(error) => {} //return Err(ErrorCode::FAIL),
-            // }
-            // self.load_correct_program();
-        }
 
         let mut custom_config = StateMachineConfiguration::default();
 
         custom_config.div_int = self.clock_div_int.get();
         custom_config.div_frac = self.clock_div_frac.get();
 
+        // 8 bit mode on pio
         custom_config.in_push_threshold = 8;
         custom_config.out_pull_threshold = 8;
 
-        custom_config.side_set_base = self.side_set_pin;
+        custom_config.side_set_base = self.clock_pin;
         custom_config.in_pins_base = self.in_pin;
         custom_config.out_pins_base = self.out_pin;
         custom_config.side_set_bit_count = 1;
-        custom_config.wrap = wrap;
+        custom_config.wrap = 2; // some of the programs are fine with length 1 but this doesn't change much
+
+        // automatically push and pull from the fifos
         custom_config.in_autopush = true;
         custom_config.out_autopull = true;
 
         self.pio.spi_program_init(
             self.sm_number,
-            self.side_set_pin,
+            self.clock_pin,
             self.in_pin,
             self.out_pin,
             &custom_config,
@@ -414,7 +304,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         if !self.is_program_loaded.get() {
             match self.load_program() {
                 Ok(()) => {}
-                Err(error) => return Err((ErrorCode::FAIL, write_buffer, read_buffer)),
+                Err(_error) => return Err((ErrorCode::FAIL, write_buffer, read_buffer)),
             }
         }
 
@@ -449,7 +339,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         if !self.is_program_loaded.get() {
             match self.load_program() {
                 Ok(()) => {}
-                Err(error) => return Err(ErrorCode::FAIL),
+                Err(_error) => return Err(ErrorCode::FAIL),
             }
         }
 
@@ -471,7 +361,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         if !self.is_program_loaded.get() {
             match self.load_program() {
                 Ok(()) => {}
-                Err(error) => return Err(ErrorCode::FAIL),
+                Err(_error) => return Err(ErrorCode::FAIL),
             }
         }
 
@@ -499,7 +389,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         if !self.is_program_loaded.get() {
             match self.load_program() {
                 Ok(()) => {}
-                Err(error) => return Err(ErrorCode::FAIL),
+                Err(_error) => return Err(ErrorCode::FAIL),
             }
         }
 
@@ -553,14 +443,14 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         }
 
         // rate = SYSCLOCK_FREQ / div
-        // div = SYCLCcOK / rate
+        // div = SYCLOCK / rate
         let divint = sysclock_freq / rate;
 
         /*
-        fractional part of sysclock/rate is
-        (sysclock % rate) / rate
-        but want it to be a fraction of 256
-        divfrac = (sysclock % rate) * 256 * rate
+            fractional part of sysclock/rate is
+            (sysclock % rate) / rate
+            but want it to be a fraction of 256
+            divfrac = (sysclock % rate) * 256 * rate
         */
         let divfrac = (sysclock_freq % rate) * 256u32 / rate;
 
@@ -596,7 +486,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
     fn set_polarity(&self, polarity: ClockPolarity) -> Result<(), ErrorCode> {
         self.clock_polarity.replace(polarity);
-        // self.load_correct_program();
         Ok(())
     }
 
@@ -606,7 +495,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
     fn set_phase(&self, phase: ClockPhase) -> Result<(), ErrorCode> {
         self.clock_phase.replace(phase);
-        // self.load_correct_program();
         Ok(())
     }
 
@@ -616,7 +504,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
     fn hold_low(&self) {
         self.chip_select.map(|p| {
-            // just treat it as active low regardless of what they passed in
+            // Just treat it as active low regardless of what they passed in
             match p.polarity {
                 Polarity::Low => {
                     p.activate();
@@ -630,7 +518,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
 
     fn release_low(&self) {
         self.chip_select.map(|p| {
-            // just treat it as active low regardless of what they passed in
+            // Just treat it as active low regardless of what they passed in
             match p.polarity {
                 Polarity::Low => {
                     p.deactivate();

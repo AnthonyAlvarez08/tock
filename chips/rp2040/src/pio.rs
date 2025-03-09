@@ -1789,23 +1789,23 @@ mod examples {
         pub fn spi_program_init(
             &self,
             sm_number: SMNumber,
-            side_set_pin: u32,
+            clock_pin: u32,
             in_pin: u32,
             out_pin: u32,
             config: &StateMachineConfiguration,
         ) {
             let sm = &self.sms[sm_number as usize];
             sm.config(config);
-            self.gpio_init(&RPGpioPin::new(RPGpio::from_u32(side_set_pin)));
+            self.gpio_init(&RPGpioPin::new(RPGpio::from_u32(clock_pin)));
             self.gpio_init(&RPGpioPin::new(RPGpio::from_u32(in_pin)));
             self.gpio_init(&RPGpioPin::new(RPGpio::from_u32(out_pin)));
             sm.set_enabled(false);
 
             // Important: make the sideset pin an output pin then make it a side set pin
             // and make sure to do all of this BEFORE setting the outpin as an outpin
-            sm.set_out_pins(side_set_pin, 1);
-            sm.set_pins_dirs(side_set_pin, 1, true);
-            sm.set_side_set_pins(side_set_pin, 1, false, false); // Do not switch pin dirs again, it will mess with the output settings
+            sm.set_out_pins(clock_pin, 1);
+            sm.set_pins_dirs(clock_pin, 1, true);
+            sm.set_side_set_pins(clock_pin, 1, false, false); // Do not switch pin dirs again, it will mess with the output settings
 
             sm.set_pins_dirs(out_pin, 1, true);
             sm.set_out_pins(out_pin, config.out_pins_count);

@@ -596,7 +596,6 @@ pub unsafe fn start() -> (
             12, // out
             SMNumber::SM0,
             PIONumber::PIO0,
-            ClockPhase::SampleLeading,
         )
     );
 
@@ -615,7 +614,6 @@ pub unsafe fn start() -> (
             21, // out
             SMNumber::SM1,
             PIONumber::PIO1,
-            ClockPhase::SampleLeading,
         )
     );
 
@@ -629,15 +627,9 @@ pub unsafe fn start() -> (
         .sm(SMNumber::SM1)
         .set_tx_client(_receive_spi);
 
-    // // debug!("Attempting to initialize PIO");
     let _ = _pio_spi.init();
 
     let _ = _receive_spi.init();
-
-    // let _ = _pio_spi.set_phase(ClockPhase::SampleTrailing);
-    // let _ = _receive_spi.set_phase(ClockPhase::SampleTrailing);
-    // let _ = _pio_spi.set_polarity(ClockPolarity::IdleHigh);
-    // let _ = _receive_spi.set_polarity(ClockPolarity::IdleHigh);
 
     _pio_spi.register();
     _receive_spi.register();
@@ -646,12 +638,6 @@ pub unsafe fn start() -> (
         // should show 8 peaks
         pin7.toggle();
     }
-
-    // _receive_spi.clear_fifos();
-    // _pio_spi.clear_fifos();
-    // _receive_spi.block_until_empty();
-    // _pio_spi.block_until_empty();
-    // debug!("empty rx on receive spi");
 
     // put like 4 bytes in a queue, and read
     // seems to have space for 5 items only
