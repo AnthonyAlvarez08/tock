@@ -125,23 +125,6 @@ impl<'a> PioSpi<'a> {
         }
     }
 
-    // Block until both the RX and TX FIFO's are empty
-    pub fn block_until_empty(&self) {
-        while !self.pio.sm(self.sm_number).rx_empty() || !self.pio.sm(self.sm_number).tx_empty() {
-            self.clear_fifos();
-        }
-    }
-
-    // Returns whether or not the RX FIFO is empty
-    pub fn rx_empty(&self) -> bool {
-        let mut empty: bool = true;
-        if !self.pio.sm(self.sm_number).rx_empty() {
-            empty = false;
-        }
-
-        empty
-    }
-
     // Helper function to read and writes to and from the buffers
     fn read_write_buffers(&self) {
         self.tx_buffer.map(|buf| {
@@ -196,16 +179,6 @@ impl<'a> PioSpi<'a> {
                 }
             }
         });
-    }
-
-    // Restart the clock
-    pub fn restart_clock(&self) {
-        self.pio.sm(self.sm_number).clkdiv_restart();
-    }
-
-    // Clear both the TX and RX FIFO's
-    pub fn clear_fifos(&self) {
-        self.pio.sm(self.sm_number).clear_fifos();
     }
 
     // Load the correct PIO program based on clock phase and polarity
@@ -485,8 +458,12 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn set_polarity(&self, polarity: ClockPolarity) -> Result<(), ErrorCode> {
-        self.clock_polarity.replace(polarity);
-        Ok(())
+        if !self.is_program_loaded.get() {
+            self.clock_polarity.replace(polarity);
+            Ok(())
+        } else {
+            Err(ErrorCode::BUSY)
+        }
     }
 
     fn get_polarity(&self) -> ClockPolarity {
@@ -494,8 +471,12 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn set_phase(&self, phase: ClockPhase) -> Result<(), ErrorCode> {
-        self.clock_phase.replace(phase);
-        Ok(())
+        if !self.is_program_loaded.get() {
+            self.clock_phase.replace(phase);
+            Ok(())
+        } else {
+            Err(ErrorCode::BUSY)
+        }
     }
 
     fn get_phase(&self) -> ClockPhase {
