@@ -10,8 +10,8 @@ use crate::pio::{PIONumber, Pio, PioRxClient, PioTxClient, SMNumber, StateMachin
 use core::cell::Cell;
 use kernel::deferred_call::{DeferredCall, DeferredCallClient};
 use kernel::hil::spi::cs::{ChipSelectPolar, Polarity};
-use kernel::hil::spi::SpiMasterClient;
 use kernel::hil::spi::{ClockPhase, ClockPolarity};
+use kernel::hil::spi::{SpiMaster, SpiMasterClient};
 use kernel::utilities::cells::MapCell;
 use kernel::utilities::cells::OptionalCell;
 use kernel::utilities::leasable_buffer::SubSliceMut;
@@ -166,10 +166,6 @@ impl<'a> PioSpi<'a> {
                 if self.tx_position.get() >= self.len.get()
                     && self.rx_position.get() >= self.len.get()
                 {
-                    self.state.set(PioSpiState::Free);
-                    self.len.set(0);
-                    self.tx_position.set(0);
-                    self.rx_position.set(0);
                     self.deferred_call.set();
                     break;
                 }
@@ -267,6 +263,10 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             Option<SubSliceMut<'static, u8>>,
         ),
     > {
+        if self.is_busy() {
+            return Err((ErrorCode::BUSY, write_buffer, read_buffer));
+        }
+
         if write_buffer.len() < 1 {
             return Err((ErrorCode::INVAL, write_buffer, read_buffer));
         }
@@ -294,6 +294,10 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
+        if self.is_busy() {
+            return Err(ErrorCode::BUSY);
+        }
+
         // One byte operations can be synchronous
         match self.pio.sm(self.sm_number).push_blocking(val as u32) {
             Err(error) => return Err(error),
@@ -308,6 +312,10 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn read_byte(&self) -> Result<u8, ErrorCode> {
+        if self.is_busy() {
+            return Err(ErrorCode::BUSY);
+        }
+
         let mut data: u32;
 
         if !self.pio.sm(self.sm_number).tx_full() {
@@ -328,6 +336,10 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn read_write_byte(&self, val: u8) -> Result<u8, ErrorCode> {
+        if self.is_busy() {
+            return Err(ErrorCode::BUSY);
+        }
+
         let mut data: u32;
 
         // One byte operations can be synchronous
@@ -362,6 +374,10 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     fn set_rate(&self, rate: u32) -> Result<u32, ErrorCode> {
         if rate == 0 {
             return Err(ErrorCode::FAIL);
+        }
+
+        if self.is_busy() {
+            return Err(ErrorCode::BUSY);
         }
 
         let sysclock_freq = self.clocks.map_or(SYSCLOCK_FREQ, |clocks| {
@@ -502,9 +518,24 @@ impl<'a> DeferredCallClient for PioSpi<'a> {
     fn handle_deferred_call(&self) {
         self.state.set(PioSpiState::Free);
 
+        // release low if any
+        self.release_low();
+
+        let transaction_size = self.len.get();
+
+        // reset internal state
+        self.state.set(PioSpiState::Free);
+        self.len.set(0);
+        self.tx_position.set(0);
+        self.rx_position.set(0);
+
         if let Some(tx_buffer) = self.tx_buffer.take() {
             self.client.map(|client| {
-                client.read_write_done(tx_buffer, self.rx_buffer.take(), Ok(0 as usize));
+                client.read_write_done(
+                    tx_buffer,
+                    self.rx_buffer.take(),
+                    Ok(transaction_size as usize),
+                );
             });
         }
     }
