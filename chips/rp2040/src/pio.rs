@@ -1626,6 +1626,9 @@ impl Pio {
                 .instr_mem
                 .modify(INSTR_MEMx::INSTR_MEM::CLEAR);
         }
+
+        // update the mask of used instructions slots
+        self.instructions_used.set(0);
     }
 
     /// Initialize a new PIO with the same default configuration for all four state machines.

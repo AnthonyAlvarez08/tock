@@ -61,6 +61,8 @@ impl<'a, Spi: SpiMasterDevice<'a>> WiFiSpi<'a, Spi> {
                 idx += 1;
             }
         });
+
+        debug!("[Capsule] printing read buffer over");
     }
 
     pub fn start(
@@ -96,8 +98,10 @@ impl<'a, Spi: SpiMasterDevice<'a>> WiFiSpi<'a, Spi> {
     pub fn configure(&self) -> Result<(), ErrorCode> {
         // set to 5MHz in the future
         // kinda hard to sync up to spi masters on the same chip so clock rate is at 5khz
+        debug!("Trying to config SPI");
         self.spi_master
-            .configure(ClockPolarity::IdleLow, ClockPhase::SampleLeading, 2_000)
+            .configure(ClockPolarity::IdleHigh, ClockPhase::SampleLeading, 1_000)
+        // Ok(())
     }
 }
 

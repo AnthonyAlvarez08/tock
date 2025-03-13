@@ -1,26 +1,19 @@
 // Licensed under the Apache License, Version 2.0 or the MIT License.
 // SPDX-License-Identifier: Apache-2.0 OR MIT
-// Copyright OxidOS Automotive 2024.
 //
 // Author: Jason Hu <jasonhu2026@u.northwestern.edu>
 //         Anthony Alvarez <anthonyalvarez2026@u.northwestern.edu>
 
 //! Programmable Input Output (PIO) hardware test file.
 use crate::clocks::{self};
-use crate::gpio::{RPGpio, RPGpioPin};
-use crate::pio::{
-    LoadedProgram, PIONumber, Pio, PioRxClient, PioTxClient, SMNumber, StateMachineConfiguration,
-};
+use crate::pio::{PIONumber, Pio, PioRxClient, PioTxClient, SMNumber, StateMachineConfiguration};
 use core::cell::Cell;
-use kernel::debug;
 use kernel::deferred_call::{DeferredCall, DeferredCallClient};
-use kernel::hil::gpio::{Configure, Output};
 use kernel::hil::spi::cs::{ChipSelectPolar, Polarity};
 use kernel::hil::spi::SpiMasterClient;
 use kernel::hil::spi::{ClockPhase, ClockPolarity};
 use kernel::utilities::cells::MapCell;
 use kernel::utilities::cells::OptionalCell;
-use kernel::utilities::cells::TakeCell;
 use kernel::utilities::leasable_buffer::SubSliceMut;
 use kernel::{hil, ErrorCode};
 
@@ -78,7 +71,6 @@ pub struct PioSpi<'a> {
     clock_phase: Cell<ClockPhase>,
     clock_polarity: Cell<ClockPolarity>,
     chip_select: OptionalCell<ChipSelectPolar<'a, crate::gpio::RPGpioPin<'a>>>,
-    is_program_loaded: Cell<bool>,
 }
 
 #[repr(u8)]
@@ -121,7 +113,6 @@ impl<'a> PioSpi<'a> {
             clock_phase: Cell::new(ClockPhase::SampleLeading), // defaults to mode 0 0
             clock_polarity: Cell::new(ClockPolarity::IdleLow),
             chip_select: OptionalCell::empty(),
-            is_program_loaded: Cell::new(false),
         }
     }
 
@@ -130,7 +121,17 @@ impl<'a> PioSpi<'a> {
         self.tx_buffer.map(|buf| {
             let temp = self.len.get();
 
-            for _i in 0..4 {
+            // FIFOs are 4 units deep, so that is the max one can read/write before having to wait
+            const FIFO_DEPTH: usize = 4;
+
+            let left_to_do = self.len.get() - self.tx_position.get() + 1;
+            let runto = if FIFO_DEPTH > left_to_do {
+                left_to_do
+            } else {
+                FIFO_DEPTH
+            };
+
+            for _i in 0..runto {
                 let mut errors = false;
 
                 // Try to write one byte
@@ -180,11 +181,16 @@ impl<'a> PioSpi<'a> {
             }
         });
     }
+}
 
-    // Load the correct PIO program based on clock phase and polarity
-    fn load_program(&self) -> Result<(), ErrorCode> {
-        self.pio.sm(self.sm_number).set_enabled(false);
+impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
+    type ChipSelect = ChipSelectPolar<'a, crate::gpio::RPGpioPin<'a>>;
 
+    fn init(&self) -> Result<(), ErrorCode> {
+        self.pio.init();
+
+        // the trailing phase programs have a different length
+        let mut wrap = 1;
         let program: &[u16] = if self.clock_phase.get() == ClockPhase::SampleLeading {
             if self.clock_polarity.get() == ClockPolarity::IdleLow {
                 &SPI_CPHA0
@@ -192,6 +198,8 @@ impl<'a> PioSpi<'a> {
                 &SPI_CPHA0_HIGH_CLOCK
             }
         } else {
+            // sample trailing branch
+            wrap = 2;
             if self.clock_polarity.get() == ClockPolarity::IdleLow {
                 &SPI_CPHA1
             } else {
@@ -200,25 +208,11 @@ impl<'a> PioSpi<'a> {
         };
 
         match self.pio.add_program16(None::<usize>, program) {
-            Ok(_res) => {}
-
-            // default one so this one returns an error
+            Ok(_res) => {
+                self.pio.sm(self.sm_number).exec_program(_res, true);
+            }
             Err(_error) => return Err(ErrorCode::FAIL),
         }
-
-        self.pio.sm(self.sm_number).clkdiv_restart();
-        self.pio.sm(self.sm_number).set_enabled(true);
-
-        self.is_program_loaded.set(true);
-        Ok(())
-    }
-}
-
-impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
-    type ChipSelect = ChipSelectPolar<'a, crate::gpio::RPGpioPin<'a>>;
-
-    fn init(&self) -> Result<(), ErrorCode> {
-        self.pio.init();
 
         let mut custom_config = StateMachineConfiguration::default();
 
@@ -233,7 +227,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         custom_config.in_pins_base = self.in_pin;
         custom_config.out_pins_base = self.out_pin;
         custom_config.side_set_bit_count = 1;
-        custom_config.wrap = 2; // some of the programs are fine with length 1 but this doesn't change much
+        custom_config.wrap = wrap;
 
         // automatically push and pull from the fifos
         custom_config.in_autopush = true;
@@ -273,14 +267,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             Option<SubSliceMut<'static, u8>>,
         ),
     > {
-        // Make sure the program is loaded
-        if !self.is_program_loaded.get() {
-            match self.load_program() {
-                Ok(()) => {}
-                Err(_error) => return Err((ErrorCode::FAIL, write_buffer, read_buffer)),
-            }
-        }
-
         if write_buffer.len() < 1 {
             return Err((ErrorCode::INVAL, write_buffer, read_buffer));
         }
@@ -308,14 +294,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
-        // Make sure the program is loaded
-        if !self.is_program_loaded.get() {
-            match self.load_program() {
-                Ok(()) => {}
-                Err(_error) => return Err(ErrorCode::FAIL),
-            }
-        }
-
         // One byte operations can be synchronous
         match self.pio.sm(self.sm_number).push_blocking(val as u32) {
             Err(error) => return Err(error),
@@ -330,14 +308,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn read_byte(&self) -> Result<u8, ErrorCode> {
-        // Make sure the program is loaded
-        if !self.is_program_loaded.get() {
-            match self.load_program() {
-                Ok(()) => {}
-                Err(_error) => return Err(ErrorCode::FAIL),
-            }
-        }
-
         let mut data: u32;
 
         if !self.pio.sm(self.sm_number).tx_full() {
@@ -358,14 +328,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn read_write_byte(&self, val: u8) -> Result<u8, ErrorCode> {
-        // Make sure the program is loaded
-        if !self.is_program_loaded.get() {
-            match self.load_program() {
-                Ok(()) => {}
-                Err(_error) => return Err(ErrorCode::FAIL),
-            }
-        }
-
         let mut data: u32;
 
         // One byte operations can be synchronous
@@ -415,16 +377,8 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             return Err(ErrorCode::INVAL);
         }
 
-        // rate = SYSCLOCK_FREQ / div
-        // div = SYCLOCK / rate
         let divint = sysclock_freq / rate;
-
-        /*
-            fractional part of sysclock/rate is
-            (sysclock % rate) / rate
-            but want it to be a fraction of 256
-            divfrac = (sysclock % rate) * 256 * rate
-        */
+        // Div frac is in units of 1/256
         let divfrac = (sysclock_freq % rate) * 256u32 / rate;
 
         self.clock_div_int.replace(divint);
@@ -442,7 +396,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn get_rate(&self) -> u32 {
-        // rate = SYSCLOCK_FREQ / (clkdiv int + (clkdiv frac/256))
         let sysclock_freq = self.clocks.map_or(SYSCLOCK_FREQ, |clocks| {
             clocks.get_frequency(clocks::Clock::Peripheral)
         });
@@ -450,7 +403,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         let divisor = self.clock_div_int.get() as f32 + (self.clock_div_frac.get() as f32 / 256f32);
 
         if divisor == 0f32 {
-            // page 375 of the rp2040 datasheet says it defaults to 65536 if given 0
             return sysclock_freq / 65536u32;
         }
 
@@ -458,9 +410,9 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn set_polarity(&self, polarity: ClockPolarity) -> Result<(), ErrorCode> {
-        if !self.is_program_loaded.get() {
+        if !self.is_busy() {
             self.clock_polarity.replace(polarity);
-            Ok(())
+            self.init()
         } else {
             Err(ErrorCode::BUSY)
         }
@@ -471,9 +423,9 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn set_phase(&self, phase: ClockPhase) -> Result<(), ErrorCode> {
-        if !self.is_program_loaded.get() {
+        if !self.is_busy() {
             self.clock_phase.replace(phase);
-            Ok(())
+            self.init()
         } else {
             Err(ErrorCode::BUSY)
         }
