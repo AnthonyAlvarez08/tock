@@ -117,25 +117,28 @@ impl<'a> PioSpi<'a> {
     }
 
     // Helper function to read and writes to and from the buffers
-    fn read_write_buffers(&self) {
+    // params:
+    // returns whther the operation finished
+    fn read_write_buffers(&self) -> bool {
+        let mut finished = false;
         self.tx_buffer.map(|buf| {
-            let temp = self.len.get();
+            let length = self.len.get();
 
             // FIFOs are 4 units deep, so that is the max one can read/write before having to wait
             const FIFO_DEPTH: usize = 4;
 
             let left_to_do = self.len.get() - self.tx_position.get() + 1;
-            let runto = if FIFO_DEPTH > left_to_do {
+            let run_to = if FIFO_DEPTH > left_to_do {
                 left_to_do
             } else {
                 FIFO_DEPTH
             };
 
-            for _i in 0..runto {
+            for _i in 0..run_to {
                 let mut errors = false;
 
                 // Try to write one byte
-                if self.tx_position.get() < temp {
+                if self.tx_position.get() < length {
                     let res = self
                         .pio
                         .sm(self.sm_number)
@@ -149,7 +152,7 @@ impl<'a> PioSpi<'a> {
                 }
 
                 // Try to read one byte
-                if self.rx_position.get() < temp {
+                if self.rx_position.get() < length {
                     let data = self.pio.sm(self.sm_number).pull();
                     match data {
                         Ok(val) => {
@@ -162,11 +165,12 @@ impl<'a> PioSpi<'a> {
                     }
                 }
 
-                // If we are done reading and writing, then reset and call client
+                // If we are done reading and writing, then exit
                 if self.tx_position.get() >= self.len.get()
                     && self.rx_position.get() >= self.len.get()
                 {
-                    self.deferred_call.set();
+                    finished = true;
+
                     break;
                 }
 
@@ -176,6 +180,35 @@ impl<'a> PioSpi<'a> {
                 }
             }
         });
+
+        finished
+    }
+
+    // reset the buffers and call the SPI client if any, to finish off a transaction
+    // should only be called from the deferred call or interrupt handlers
+    fn call_client_and_clean_up(&self) {
+        self.state.set(PioSpiState::Free);
+
+        // release low if any
+        self.release_low();
+
+        let transaction_size = self.len.get();
+
+        // reset internal state
+        self.state.set(PioSpiState::Free);
+        self.len.set(0);
+        self.tx_position.set(0);
+        self.rx_position.set(0);
+
+        if let Some(tx_buffer) = self.tx_buffer.take() {
+            self.client.map(|client| {
+                client.read_write_done(
+                    tx_buffer,
+                    self.rx_buffer.take(),
+                    Ok(transaction_size as usize),
+                );
+            });
+        }
     }
 }
 
@@ -288,7 +321,12 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         }
 
         // Begin reading/writing to/from buffers
-        self.read_write_buffers();
+        let done = self.read_write_buffers();
+
+        // this call is likely comming from above, so set a deferred call if it gets done within here
+        if done {
+            self.deferred_call.set();
+        }
 
         Ok(())
     }
@@ -298,41 +336,14 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             return Err(ErrorCode::BUSY);
         }
 
-        // One byte operations can be synchronous
-        match self.pio.sm(self.sm_number).push_blocking(val as u32) {
-            Err(error) => return Err(error),
-            _ => {}
+        match self.read_write_byte(val) {
+            Ok(_) => Ok(()),
+            Err(error) => Err(error),
         }
-
-        if !self.pio.sm(self.sm_number).rx_empty() {
-            let _ = self.pio.sm(self.sm_number).pull();
-        }
-
-        Ok(())
     }
 
     fn read_byte(&self) -> Result<u8, ErrorCode> {
-        if self.is_busy() {
-            return Err(ErrorCode::BUSY);
-        }
-
-        let mut data: u32;
-
-        if !self.pio.sm(self.sm_number).tx_full() {
-            let _ = self.pio.sm(self.sm_number).push(0);
-        }
-
-        // One byte operations can be synchronous
-        data = match self.pio.sm(self.sm_number).pull_blocking() {
-            Ok(val) => val,
-            Err(error) => {
-                return Err(error);
-            }
-        };
-
-        data = data >> AUTOPULL_SHIFT;
-
-        Ok(data as u8)
+        self.read_write_byte(0)
     }
 
     fn read_write_byte(&self, val: u8) -> Result<u8, ErrorCode> {
@@ -484,9 +495,13 @@ impl<'a> PioTxClient for PioSpi<'a> {
     // Buffer space availble, so send next byte
     fn on_buffer_space_available(&self) {
         self.tx_position.set(self.tx_position.get() + 1);
+
         match self.state.get() {
             PioSpiState::Writing | PioSpiState::ReadingWriting => {
-                self.read_write_buffers();
+                let done = self.read_write_buffers();
+                if done {
+                    self.call_client_and_clean_up();
+                }
             }
             _ => {}
         }
@@ -506,7 +521,10 @@ impl<'a> PioRxClient for PioSpi<'a> {
         }
         match self.state.get() {
             PioSpiState::Reading | PioSpiState::ReadingWriting => {
-                self.read_write_buffers();
+                let done = self.read_write_buffers();
+                if done {
+                    self.call_client_and_clean_up();
+                }
             }
             _ => {}
         }
@@ -514,30 +532,9 @@ impl<'a> PioRxClient for PioSpi<'a> {
 }
 
 impl<'a> DeferredCallClient for PioSpi<'a> {
-    // Transfer ownership to client
+    // deferred call to calling the client
     fn handle_deferred_call(&self) {
-        self.state.set(PioSpiState::Free);
-
-        // release low if any
-        self.release_low();
-
-        let transaction_size = self.len.get();
-
-        // reset internal state
-        self.state.set(PioSpiState::Free);
-        self.len.set(0);
-        self.tx_position.set(0);
-        self.rx_position.set(0);
-
-        if let Some(tx_buffer) = self.tx_buffer.take() {
-            self.client.map(|client| {
-                client.read_write_done(
-                    tx_buffer,
-                    self.rx_buffer.take(),
-                    Ok(transaction_size as usize),
-                );
-            });
-        }
+        self.call_client_and_clean_up();
     }
 
     fn register(&'static self) {
