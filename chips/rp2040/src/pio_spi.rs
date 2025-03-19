@@ -50,6 +50,29 @@ const SPI_CPHA1_HIGH_CLOCK: [u16; 3] = [
     0x5001, /*  2: in     pins, 1         side 1 */
 ];
 
+/*
+Instantiation example
+let _pio_spi: &'static mut PioSpi<'static> = static_init!(
+        PioSpi,
+        PioSpi::<'static>::new(
+            &peripherals.pio0,
+            &peripherals.clocks,
+            10, // clock pin
+            11, // in pin (MISO)
+            12, // out pin (MOSI)
+            SMNumber::SM0,
+            PIONumber::PIO0,
+        )
+    );
+
+    // make the pio subscribe to interrupts
+    peripherals.pio0.sm(SMNumber::SM0).set_rx_client(_pio_spi);
+    peripherals.pio0.sm(SMNumber::SM0).set_tx_client(_pio_spi);
+
+By default it is in clock idle low, sample leading edge clock phase, 1 MHz clock frequency
+
+*/
+
 pub struct PioSpi<'a> {
     clocks: OptionalCell<&'a clocks::Clocks>,
     pio: &'a Pio,
@@ -71,6 +94,7 @@ pub struct PioSpi<'a> {
     clock_phase: Cell<ClockPhase>,
     clock_polarity: Cell<ClockPolarity>,
     chip_select: OptionalCell<ChipSelectPolar<'a, crate::gpio::RPGpioPin<'a>>>,
+    hold_low: Cell<bool>,
 }
 
 #[repr(u8)]
@@ -113,6 +137,7 @@ impl<'a> PioSpi<'a> {
             clock_phase: Cell::new(ClockPhase::SampleLeading), // defaults to mode 0 0
             clock_polarity: Cell::new(ClockPolarity::IdleLow),
             chip_select: OptionalCell::empty(),
+            hold_low: Cell::new(false),
         }
     }
 
@@ -121,6 +146,9 @@ impl<'a> PioSpi<'a> {
     // returns whther the operation finished
     fn read_write_buffers(&self) -> bool {
         let mut finished = false;
+
+        self.set_chip_select(true);
+
         self.tx_buffer.map(|buf| {
             let length = self.len.get();
 
@@ -174,7 +202,7 @@ impl<'a> PioSpi<'a> {
                     break;
                 }
 
-                // If any read/write errors
+                // If any read/write errors, then exit and stop writing
                 if errors {
                     break;
                 }
@@ -189,9 +217,6 @@ impl<'a> PioSpi<'a> {
     fn call_client_and_clean_up(&self) {
         self.state.set(PioSpiState::Free);
 
-        // release low if any
-        self.release_low();
-
         let transaction_size = self.len.get();
 
         // reset internal state
@@ -200,6 +225,10 @@ impl<'a> PioSpi<'a> {
         self.tx_position.set(0);
         self.rx_position.set(0);
 
+        if !self.hold_low.get() {
+            self.set_chip_select(false);
+        }
+
         if let Some(tx_buffer) = self.tx_buffer.take() {
             self.client.map(|client| {
                 client.read_write_done(
@@ -207,6 +236,30 @@ impl<'a> PioSpi<'a> {
                     self.rx_buffer.take(),
                     Ok(transaction_size as usize),
                 );
+            });
+        }
+    }
+
+    fn set_chip_select(&self, active: bool) {
+        // treat chip select as active low regardlesss of what they passed in
+
+        if active {
+            self.chip_select.map(|p| match p.polarity {
+                Polarity::Low => {
+                    p.activate();
+                }
+                _ => {
+                    p.deactivate();
+                }
+            });
+        } else {
+            self.chip_select.map(|p| match p.polarity {
+                Polarity::Low => {
+                    p.deactivate();
+                }
+                _ => {
+                    p.activate();
+                }
             });
         }
     }
@@ -304,8 +357,7 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
             return Err((ErrorCode::INVAL, write_buffer, read_buffer));
         }
 
-        // If there is a chip select, make sure it is on
-        self.hold_low();
+        self.set_chip_select(true);
 
         // Keep track of the new buffers
         self.len.replace(write_buffer.len());
@@ -332,10 +384,6 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn write_byte(&self, val: u8) -> Result<(), ErrorCode> {
-        if self.is_busy() {
-            return Err(ErrorCode::BUSY);
-        }
-
         match self.read_write_byte(val) {
             Ok(_) => Ok(()),
             Err(error) => Err(error),
@@ -350,6 +398,8 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         if self.is_busy() {
             return Err(ErrorCode::BUSY);
         }
+
+        self.set_chip_select(true);
 
         let mut data: u32;
 
@@ -369,6 +419,10 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
         };
 
         data = data >> AUTOPULL_SHIFT;
+
+        if !self.hold_low.get() {
+            self.set_chip_select(false);
+        }
 
         Ok(data as u8)
     }
@@ -463,31 +517,11 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn hold_low(&self) {
-        self.chip_select.map(|p| {
-            // Just treat it as active low regardless of what they passed in
-            match p.polarity {
-                Polarity::Low => {
-                    p.activate();
-                }
-                _ => {
-                    p.deactivate();
-                }
-            }
-        });
+        self.hold_low.set(true);
     }
 
     fn release_low(&self) {
-        self.chip_select.map(|p| {
-            // Just treat it as active low regardless of what they passed in
-            match p.polarity {
-                Polarity::Low => {
-                    p.deactivate();
-                }
-                _ => {
-                    p.activate();
-                }
-            }
-        });
+        self.hold_low.set(false);
     }
 }
 
