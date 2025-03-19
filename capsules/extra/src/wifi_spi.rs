@@ -16,8 +16,8 @@ use kernel::hil;
 use kernel::hil::spi::{ClockPhase, ClockPolarity, SpiMaster, SpiMasterClient, SpiMasterDevice};
 
 pub const DRIVER_NUM: usize = driver::NUM::WiFiSpi as usize;
-pub const WIFI_SPI_TX_SIZE: usize = 8;
-pub const WIFI_SPI_RX_SIZE: usize = 8;
+pub const WIFI_SPI_TX_SIZE: usize = 13;
+pub const WIFI_SPI_RX_SIZE: usize = 13;
 
 pub const TX_BUF_LEN: usize = WIFI_SPI_TX_SIZE;
 pub const RX_BUF_LEN: usize = WIFI_SPI_RX_SIZE;
@@ -80,6 +80,8 @@ impl<'a, Spi: SpiMasterDevice<'a>> WiFiSpi<'a, Spi> {
 
         self.txbuffer.take().map(|txbuf| {
             debug!("[Capsule] reading and writing to buffers");
+
+            // self.spi_master.hold_low();
             let val = self
                 .spi_master
                 .read_write_bytes(txbuf, self.rxbuffer.take());
@@ -100,7 +102,7 @@ impl<'a, Spi: SpiMasterDevice<'a>> WiFiSpi<'a, Spi> {
         // kinda hard to sync up to spi masters on the same chip so clock rate is at 5khz
         debug!("Trying to config SPI");
         self.spi_master
-            .configure(ClockPolarity::IdleHigh, ClockPhase::SampleLeading, 1_000)
+            .configure(ClockPolarity::IdleLow, ClockPhase::SampleLeading, 1_000)
         // Ok(())
     }
 }
@@ -124,6 +126,8 @@ impl<'a, Spi: SpiMasterDevice<'a>> SpiMasterClient for WiFiSpi<'a, Spi> {
     ) {
         debug!("Spi Master client impl!!");
         debug!("Read Write Done");
+
+        // self.spi_master.release_low();
 
         // the l3gd20 example does this
         self.txbuffer.replace(write_buffer);

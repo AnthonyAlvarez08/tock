@@ -32,6 +32,7 @@ use kernel::hil::gpio::{Configure, FloatingState};
 use kernel::hil::i2c::I2CMaster;
 use kernel::hil::led::LedHigh;
 use kernel::hil::pwm::Pwm;
+use kernel::hil::spi::cs::ChipSelectPolar;
 use kernel::hil::spi::{ClockPhase, ClockPolarity, SpiMaster};
 use kernel::hil::usb::Client;
 use kernel::platform::{KernelResources, SyscallDriverLookup};
@@ -639,6 +640,24 @@ pub unsafe fn start() -> (
         pin7.toggle();
     }
 
+    // for i in [1, 2, 3, 4, 5, 6] {
+    //     let _ = _receive_spi.write_byte(i as u8);
+    // }
+
+    // let _ = _receive_spi.set_polarity(ClockPolarity::IdleHigh);
+    // let _ = _receive_spi.set_phase(ClockPhase::SampleTrailing);
+
+    // for i in [1, 2, 3, 4, 5, 6] {
+    //     let _ = _receive_spi.write_byte(i as u8);
+    // }
+
+    // let _ = _receive_spi.set_polarity(ClockPolarity::IdleLow);
+    // let _ = _receive_spi.set_phase(ClockPhase::SampleLeading);
+
+    // for i in [1, 2, 3, 4, 5, 6] {
+    //     let _ = _receive_spi.write_byte(i as u8);
+    // }
+
     // put like 4 bytes in a queue, and read
     // seems to have space for 5 items only
     // should be read as [167, 212, 81, 177, 114, 246, 197, 113, 227]
@@ -697,7 +716,7 @@ pub unsafe fn start() -> (
 
     let wifi_spi = components::wifi_spi::WiFiSpiComponent::new(
         spi_mux,
-        peripherals.pins.get_pin(RPGpio::GPIO25),
+        peripherals.pins.get_pin(RPGpio::GPIO17),
         board_kernel,
         capsules_extra::wifi_spi::DRIVER_NUM,
     )
@@ -713,7 +732,7 @@ pub unsafe fn start() -> (
 
     let wifi_spi2 = components::wifi_spi::WiFiSpiComponent::new(
         spi_mux2,
-        peripherals.pins.get_pin(RPGpio::GPIO25),
+        peripherals.pins.get_pin(RPGpio::GPIO19),
         board_kernel,
         capsules_extra::wifi_spi::DRIVER_NUM,
     )
@@ -724,13 +743,31 @@ pub unsafe fn start() -> (
     wifi_spi2.register();
     _pio_spi.set_client(wifi_spi2);
 
+    let pin17 = peripherals.pins.get_pin(RPGpio::GPIO17);
+    pin17.make_output();
+
+    let chipselect = ChipSelectPolar {
+        pin: pin17,
+        polarity: kernel::hil::spi::cs::Polarity::Low,
+    };
+    chipselect.deactivate();
+
+    let _ = _receive_spi.specify_chip_select(chipselect);
+
+    _receive_spi.release_low();
+
     // I temporarily made the buffer sizes 8 for the spi capsule
-    static mut outbuf: [u8; 8] = [
-        0x6Au8, 0xB1u8, 0x43u8, 0xF1u8, 0x42u8, 0xE2u8, 0x79u8, 0x2Cu8,
-    ];
+
+    // writes "!Hello, Tock"
+    static mut outbuf: [u8; 13] = [33, 72, 101, 108, 108, 111, 44, 32, 84, 111, 99, 107, 33];
+    // static mut outbuf: [u8; 8] = [
+    //     0x6Au8, 0xB1u8, 0x43u8, 0xF1u8, 0x42u8, 0xE2u8, 0x79u8, 0x2Cu8,
+    // ];
 
     // ['0x82', '0x39', '0x16', '0x47', '0x5d', '0xc8', '0xc2', '0x29']
-    static mut outbuf2: [u8; 8] = [130u8, 57u8, 22u8, 71u8, 93u8, 200u8, 194u8, 41u8];
+    static mut outbuf2: [u8; 13] = [
+        130u8, 57u8, 22u8, 71u8, 93u8, 200u8, 194u8, 41u8, 21u8, 92u8, 1u8, 1u8, 1u8,
+    ];
     // _pio_spi.write_word(0xA7);
     let _ = wifi_spi.start(&mut outbuf, 0);
     for _ in 0..20 {

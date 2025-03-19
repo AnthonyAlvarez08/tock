@@ -147,8 +147,6 @@ impl<'a> PioSpi<'a> {
     fn read_write_buffers(&self) -> bool {
         let mut finished = false;
 
-        self.set_chip_select(true);
-
         self.tx_buffer.map(|buf| {
             let length = self.len.get();
 
@@ -517,11 +515,11 @@ impl<'a> hil::spi::SpiMaster<'a> for PioSpi<'a> {
     }
 
     fn hold_low(&self) {
-        self.hold_low.set(true);
+        self.hold_low.replace(true);
     }
 
     fn release_low(&self) {
-        self.hold_low.set(false);
+        self.hold_low.replace(false);
     }
 }
 
