@@ -54,7 +54,6 @@
 //!   - `data`: The index of the LED. Starts at 0.
 //!   - Return: `Ok(())` if the LED index was valid, `INVAL` otherwise.
 
-use kernel::debug;
 use kernel::hil::led;
 use kernel::syscall::{CommandReturn, SyscallDriver};
 use kernel::{ErrorCode, ProcessId};
@@ -95,11 +94,6 @@ impl<L: led::Led, const NUM_LEDS: usize> SyscallDriver for LedDriver<'_, L, NUM_
     /// - `3`: Toggle the LED at index specified by `data` on or off. Returns
     ///        `INVAL` if the LED index is not valid.
     fn command(&self, command_num: usize, data: usize, _: usize, _: ProcessId) -> CommandReturn {
-        // debug!(
-        //     "LED syscall with command {} and data {}\n",
-        //     command_num, data
-        // );
-
         match command_num {
             // get number of LEDs
             // TODO(Tock 3.0): TRD104 specifies that Command 0 should return Success, not SuccessU32,

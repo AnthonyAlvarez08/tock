@@ -12,37 +12,27 @@
 #![cfg_attr(not(doc), no_main)]
 #![deny(missing_docs)]
 
-use core::borrow::BorrowMut;
 use core::ptr::{addr_of, addr_of_mut};
 
-use capsules_core::gpio::GPIO;
 use capsules_core::i2c_master::I2CMasterDriver;
 use capsules_core::virtualizers::virtual_alarm::VirtualMuxAlarm;
-use capsules_extra::wifi_spi::WiFiSpi;
 use components::date_time_component_static;
 use components::gpio::GpioComponent;
 use components::led::LedsComponent;
-use components::wifi_spi::WiFiSpiComponent;
 use enum_primitive::cast::FromPrimitive;
 use kernel::component::Component;
 use kernel::debug;
-use kernel::deferred_call::{DeferredCall, DeferredCallClient};
-use kernel::hil::gpio::Output;
 use kernel::hil::gpio::{Configure, FloatingState};
 use kernel::hil::i2c::I2CMaster;
 use kernel::hil::led::LedHigh;
-use kernel::hil::pwm::Pwm;
-use kernel::hil::spi::cs::ChipSelectPolar;
-use kernel::hil::spi::{ClockPhase, ClockPolarity, SpiMaster};
 use kernel::hil::usb::Client;
 use kernel::platform::{KernelResources, SyscallDriverLookup};
 use kernel::scheduler::round_robin::RoundRobinSched;
 use kernel::syscall::SyscallDriver;
-use kernel::utilities::cells::TakeCell;
 use kernel::{capabilities, create_capability, static_init, Kernel};
+
 use rp2040::adc::{Adc, Channel};
 use rp2040::chip::{Rp2040, Rp2040DefaultPeripherals};
-use rp2040::clocks::Clocks;
 use rp2040::clocks::{
     AdcAuxiliaryClockSource, PeripheralAuxiliaryClockSource, PllClock,
     ReferenceAuxiliaryClockSource, ReferenceClockSource, RtcAuxiliaryClockSource,
@@ -50,11 +40,6 @@ use rp2040::clocks::{
 };
 use rp2040::gpio::{GpioFunction, RPGpio, RPGpioPin};
 use rp2040::i2c::I2c;
-use rp2040::pio::Pio;
-use rp2040::pio::{PIONumber, SMNumber, StateMachineConfiguration};
-use rp2040::pio_pwm::PioPwm;
-// use rp2040::pio_spi::PioInterruptClient;
-use rp2040::pio_spi::PioSpi;
 use rp2040::resets::Peripheral;
 use rp2040::sysinfo;
 use rp2040::timer::RPTimer;
@@ -111,9 +96,6 @@ pub struct RaspberryPiPico {
         &'static capsules_extra::date_time::DateTimeCapsule<'static, rp2040::rtc::Rtc<'static>>,
     scheduler: &'static RoundRobinSched<'static>,
     systick: cortexm0p::systick::SysTick,
-
-    pio0: &'static Pio,
-    pio1: &'static Pio,
 }
 
 impl SyscallDriverLookup for RaspberryPiPico {
@@ -557,235 +539,6 @@ pub unsafe fn start() -> (
     let scheduler = components::sched::round_robin::RoundRobinComponent::new(&*addr_of!(PROCESSES))
         .finalize(components::round_robin_component_static!(NUM_PROCS));
 
-    // TODO: does not compile due to lifetime shenanigans
-
-    let pin6 = peripherals.pins.get_pin(RPGpio::GPIO6);
-    pin6.make_output();
-    let pin7 = peripherals.pins.get_pin(RPGpio::GPIO7);
-    pin7.make_output();
-    let pin8 = peripherals.pins.get_pin(RPGpio::GPIO8);
-    pin8.make_output();
-    let pin9 = peripherals.pins.get_pin(RPGpio::GPIO9);
-    pin9.make_output();
-
-    for _ in 0..10 {
-        pin6.toggle(); // gray line
-        pin7.toggle(); // brown line
-        pin8.toggle(); // red line, inside writer spi
-        pin9.toggle(); // orange line, inside receiver spi
-    }
-
-    // try to turn on the wifi chip
-    let pin23 = peripherals.pins.get_pin(RPGpio::GPIO23);
-    pin23.make_output();
-    pin23.set_function(GpioFunction::PIO0);
-    pin23.set();
-
-    let pin25 = peripherals.pins.get_pin(RPGpio::GPIO25);
-    pin25.make_output();
-    pin25.set_function(GpioFunction::PIO0);
-    pin25.clear(); // active low
-
-    // let pio = static_init!(Pio, Pio::new_pio1());
-    let _pio_spi: &'static mut PioSpi<'static> = static_init!(
-        PioSpi,
-        PioSpi::<'static>::new(
-            &peripherals.pio0,
-            &peripherals.clocks,
-            10, // side set = clock
-            11, // in
-            12, // out
-            SMNumber::SM0,
-            PIONumber::PIO0,
-        )
-    );
-
-    // make the pio subscribe to interrupts
-    peripherals.pio0.sm(SMNumber::SM0).set_rx_client(_pio_spi);
-    peripherals.pio0.sm(SMNumber::SM0).set_tx_client(_pio_spi);
-
-    // let pio2 = static_init!(Pio, Pio::new_pio1());
-    let _receive_spi: &'static mut PioSpi<'static> = static_init!(
-        PioSpi,
-        PioSpi::<'static>::new(
-            &peripherals.pio1,
-            &peripherals.clocks,
-            19, // sideset = clock
-            20, // in
-            21, // out
-            SMNumber::SM1,
-            PIONumber::PIO1,
-        )
-    );
-
-    // make the pio subscribe to interrupts
-    peripherals
-        .pio1
-        .sm(SMNumber::SM1)
-        .set_rx_client(_receive_spi);
-    peripherals
-        .pio1
-        .sm(SMNumber::SM1)
-        .set_tx_client(_receive_spi);
-
-    let _ = _pio_spi.init();
-
-    let _ = _receive_spi.init();
-
-    _pio_spi.register();
-    _receive_spi.register();
-
-    for _ in 0..16 {
-        // should show 8 peaks
-        pin7.toggle();
-    }
-
-    // for i in [1, 2, 3, 4, 5, 6] {
-    //     let _ = _receive_spi.write_byte(i as u8);
-    // }
-
-    // let _ = _receive_spi.set_polarity(ClockPolarity::IdleHigh);
-    // let _ = _receive_spi.set_phase(ClockPhase::SampleTrailing);
-
-    // for i in [1, 2, 3, 4, 5, 6] {
-    //     let _ = _receive_spi.write_byte(i as u8);
-    // }
-
-    // let _ = _receive_spi.set_polarity(ClockPolarity::IdleLow);
-    // let _ = _receive_spi.set_phase(ClockPhase::SampleLeading);
-
-    // for i in [1, 2, 3, 4, 5, 6] {
-    //     let _ = _receive_spi.write_byte(i as u8);
-    // }
-
-    // put like 4 bytes in a queue, and read
-    // seems to have space for 5 items only
-    // should be read as [167, 212, 81, 177, 114, 246, 197, 113, 227]
-    // for i in [
-    //     0xA7u8, 0xB4u8, 0xC3u8,
-    //     0xD5u8, /*0xD4u8, 0x51u8, 0xB1u8, 0x72u8, 0xF6u8, 0xC5u8, 0x71u8, 0xE3u8,*/
-    // ] {
-    //     // debug!("writing word");
-    //     for _ in 0..6 {
-    //         // shouw show 3 peaks
-    //         pin6.toggle();
-    //     }
-    //     // _pio_spi.block_until_ready_to_write();
-    //     _pio_spi.write_word(i as u32);
-    //     // debug!("finished writing word");
-
-    //     for _ in 0..6 {
-    //         pin7.toggle();
-    //     }
-
-    //     let val = match _receive_spi.read_word() {
-    //         Ok(data) => data,
-    //         Err(err) => {
-    //             // debug!("receive spi error");
-    //             for _ in 0..30 {
-    //                 // should show 15 peaks
-    //                 pin7.toggle();
-    //             }
-    //             0
-    //         }
-    //     };
-    //     // debug!("recv this value: {val}");
-
-    //     for _ in 0..10 {
-    //         // shoud show 5 peaks
-    //         pin6.toggle();
-    //     }
-
-    //     let _ = _receive_spi.write_word(val);
-
-    //     for _ in 0..10 {
-    //         // should show 5 peaks
-    //         pin7.toggle();
-    //     }
-    // }
-
-    // WIFI chip actual pins
-    // https://github.com/raspberrypi/pico-sdk/blob/master/src/boards/include/boards/pico2_w.h#L124
-    // 29 = clock
-    // 25 = chip select
-    // 24 = both input and output
-    // 23 = power on
-
-    let spi_mux = components::spi::SpiMuxComponent::new(_receive_spi)
-        .finalize(components::spi_mux_component_static!(PioSpi));
-
-    let wifi_spi = components::wifi_spi::WiFiSpiComponent::new(
-        spi_mux,
-        peripherals.pins.get_pin(RPGpio::GPIO17),
-        board_kernel,
-        capsules_extra::wifi_spi::DRIVER_NUM,
-    )
-    .finalize(components::wifi_spi_component_static!(
-        // spi type
-        PioSpi
-    ));
-    wifi_spi.register();
-    _receive_spi.set_client(wifi_spi);
-
-    let spi_mux2 = components::spi::SpiMuxComponent::new(_pio_spi)
-        .finalize(components::spi_mux_component_static!(PioSpi));
-
-    let wifi_spi2 = components::wifi_spi::WiFiSpiComponent::new(
-        spi_mux2,
-        peripherals.pins.get_pin(RPGpio::GPIO19),
-        board_kernel,
-        capsules_extra::wifi_spi::DRIVER_NUM,
-    )
-    .finalize(components::wifi_spi_component_static!(
-        // spi type
-        PioSpi
-    ));
-    wifi_spi2.register();
-    _pio_spi.set_client(wifi_spi2);
-
-    let pin17 = peripherals.pins.get_pin(RPGpio::GPIO17);
-    pin17.make_output();
-
-    let chipselect = ChipSelectPolar {
-        pin: pin17,
-        polarity: kernel::hil::spi::cs::Polarity::Low,
-    };
-    chipselect.deactivate();
-
-    let _ = _receive_spi.specify_chip_select(chipselect);
-
-    _receive_spi.release_low();
-
-    // I temporarily made the buffer sizes 8 for the spi capsule
-
-    // writes "!Hello, Tock"
-    static mut outbuf: [u8; 13] = [33, 72, 101, 108, 108, 111, 44, 32, 84, 111, 99, 107, 33];
-    // static mut outbuf: [u8; 8] = [
-    //     0x6Au8, 0xB1u8, 0x43u8, 0xF1u8, 0x42u8, 0xE2u8, 0x79u8, 0x2Cu8,
-    // ];
-
-    // ['0x82', '0x39', '0x16', '0x47', '0x5d', '0xc8', '0xc2', '0x29']
-    static mut outbuf2: [u8; 13] = [
-        130u8, 57u8, 22u8, 71u8, 93u8, 200u8, 194u8, 41u8, 21u8, 92u8, 1u8, 1u8, 1u8,
-    ];
-    // _pio_spi.write_word(0xA7);
-    let _ = wifi_spi.start(&mut outbuf, 0);
-    for _ in 0..20 {
-        pin8.toggle();
-    }
-
-    let _ = wifi_spi2.start(&mut outbuf2, 0);
-    for _ in 0..20 {
-        pin9.toggle();
-    }
-
-    wifi_spi.print_read();
-
-    for _ in 0..40 {
-        // should show 20 peaks
-        pin7.toggle();
-    }
-
     let raspberry_pi_pico = RaspberryPiPico {
         ipc: kernel::ipc::IPC::new(
             board_kernel,
@@ -803,19 +556,12 @@ pub unsafe fn start() -> (
 
         scheduler,
         systick: cortexm0p::systick::SysTick::new_with_calibration(125_000_000),
-        pio0: &peripherals.pio0,
-        pio1: &peripherals.pio1,
     };
 
     let platform_type = match peripherals.sysinfo.get_platform() {
         sysinfo::Platform::Asic => "ASIC",
         sysinfo::Platform::Fpga => "FPGA",
     };
-
-    for _ in 0..10 {
-        // should show 5 peaks
-        pin6.toggle();
-    }
 
     debug!(
         "RP2040 Revision {} {}",
@@ -857,14 +603,32 @@ pub unsafe fn start() -> (
         debug!("{:?}", err);
     });
 
-    for _ in 0..10 {
-        // should show 5 peaks
-        pin7.toggle();
-        pin8.toggle();
-    }
+    //======================================================================================================
+    // PIO SPI example
+    // starts with clock polarity idle low, clock phase leading, clock rate 1Mhz by default
+    // let sm = SMNumber::SM0;
+    // let _pio_spi: &'static mut PioSpi<'static> = static_init!(
+    //     PioSpi,
+    //     PioSpi::<'static>::new(
+    //         &peripherals.pio0,
+    //         &peripherals.clocks,
+    //         10, // clock pin
+    //         11, // in pin (MISO)
+    //         12, // out pin (MOSI)
+    //         sm,
+    //         PIONumber::PIO0,
+    //     )
+    // );
+    // // make the pio subscribe to interrupts
+    // peripherals.pio0.sm(sm).set_rx_client(_pio_spi);
+    // peripherals.pio0.sm(sm).set_tx_client(_pio_spi);
+    // _pio_spi.init();
+    // _pio_spi.register();
+    // _pio_spi.write_byte(0xA1u8);
 
+    //======================================================================================================
+    // PIO PWM example
     // let mut pio: Pio = Pio::new_pio0();
-
     // let pio_pwm = PioPwm::new(&mut pio, &peripherals.clocks);
     // // This will start a PWM with PIO with the set frequency and duty cycle on the specified pin.
     // pio_pwm
