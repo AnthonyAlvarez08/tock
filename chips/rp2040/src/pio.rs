@@ -519,6 +519,243 @@ const PIO1_SET_BASE: StaticRef<PioRegisters> =
 const PIO1_CLEAR_BASE: StaticRef<PioRegisters> =
     unsafe { StaticRef::new((PIO_1_BASE_ADDRESS + 0x3000) as *const PioRegisters) };
 
+/// Helper class to make PIO instructions in code
+pub struct PioInstruction {}
+
+impl PioInstruction {
+    /// labels for PIO instructions
+    const JMP: u16 = 0b000 << 13u16;
+    const WAIT: u16 = 0b001 << 13u16;
+    const IN: u16 = 0b010 << 13u16;
+    const OUT: u16 = 0b011 << 13u16;
+    const PUSHPULL: u16 = 0b100 << 13u16;
+    const MOV: u16 = 0b101 << 13u16;
+    const IRQ: u16 = 0b110 << 13u16;
+    const SET: u16 = 0b111 << 13u16;
+
+    /// jump instruction, sets program counter to address if condition is true
+    /// condition options (binary):
+    /// 000: (no condition): Always
+    /// 001: !X: scratch X zero
+    /// 010: X--: scratch X non-zero, prior to decrement
+    /// 011: !Y: scratch Y zero
+    /// 100: Y--: scratch Y non-zero, prior to decrement
+    /// 101: X!=Y: scratch X not equal scratch Y
+    /// 110: PIN: branch on input pin
+    /// 111: !OSRE: output shift register not empty
+    pub fn jmp(
+        delay_sideset: u16, // 5 bit
+        condition: u16,     // 3 bit
+        address: u16,       // 5 bit
+    ) -> u16 {
+        let delay_sideset = delay_sideset & 0x1f;
+        let condition = condition & 0x7;
+        let address = address & 0x1f;
+
+        PioInstruction::JMP | delay_sideset << 8u16 | condition << 5u16 | address
+    }
+
+    /// stall until a condition is met
+    /// polarity: 1 means wait for condition = 1, 0 wait for condition = 0
+    /// index: which pin or bit of the source to check
+    /// source (binary): where is the condition at?
+    /// 00: GPIO
+    /// 01: Pin
+    /// 10: IRQ
+    /// 11: reserved
+    pub fn wait(
+        delay_sideset: u16, // 5 bit
+        polarity: bool,     // 1 bit
+        source: u16,        // 2 bit
+        index: u16,         // 5 bit
+    ) -> u16 {
+        let delay_sideset = delay_sideset & 0x1f;
+        let pol = u16::from(polarity);
+        let index = index & 0x1f;
+        let source = source & 0x3;
+        PioInstruction::WAIT | delay_sideset << 8u16 | pol << 6u16 | source << 5u16 | index
+    }
+
+    /// named in_instr because "in" is a keyword
+    /// shifts `bit_count` bits from source into the input shift register
+    /// source (binary):
+    /// 000: PINS
+    /// 001: X (scratch register X)
+    /// 010: Y (scratch register Y)
+    /// 011: NULL (all zeroes)
+    /// 100: Reserved
+    /// 101: Reserved
+    /// 110: ISR
+    /// 111: OSR
+    pub fn in_instr(
+        delay_sideset: u16, // 5 bit
+        source: u16,        // 3 bit
+        bit_count: u16,     // 5 bit
+    ) -> u16 {
+        let delay_sideset = delay_sideset & 0x1f;
+        let bit_count = bit_count & 0x1f;
+        let source = source & 0x7;
+        PioInstruction::IN | delay_sideset << 8u16 | source << 5u16 | bit_count
+    }
+
+    /// shifts `bit_count` bits from output shift register into the destination
+    /// destination (binary):
+    /// 000: PINS
+    /// 001: X (scratch register X)
+    /// 010: Y (scratch register Y)
+    /// 011: NULL (discard data)
+    /// 100: PINDIRS
+    /// 101: program counter
+    /// 110: ISR (also sets ISR shift counter to bit count)
+    /// 111: EXEC (execute OSR shift data as instruction)
+    pub fn out(
+        delay_sideset: u16, // 5 bit
+        destination: u16,   // 3 bit
+        bit_count: u16,     // 5 bit
+    ) -> u16 {
+        let delay_sideset = delay_sideset & 0x1f;
+        let bit_count = bit_count & 0x1f;
+        let destination = destination & 0x7;
+        PioInstruction::OUT | delay_sideset << 8u16 | destination << 5u16 | bit_count
+    }
+
+    /// push the contents of ISR into RX FIFO as a single 32 bit word, ISR set to 0
+    /// block: if 1, stall until RX FIFO is pull
+    /// if_full: 1 => do nothing until input shift count has reached threshold
+    pub fn push(
+        delay_sideset: u16, // 5 bit
+        if_full: bool,      // 1 bit
+        block: bool,        // 1 bit
+    ) -> u16 {
+        let if_full = u16::from(if_full);
+        let block = u16::from(block);
+        let delay_sideset = delay_sideset & 0x1f;
+        PioInstruction::PUSHPULL
+            | delay_sideset << 8u16
+            | 0u16 << 7u16
+            | if_full << 6u16
+            | block << 5u16
+    }
+
+    /// push the contents of ISR into RX FIFO as a single 32 bit word, ISR set to 0
+    /// block: if 1, stall while TX FIFO is emtpy
+    /// if_empty: 1 => do nothing until output shift count reaches threshold
+    pub fn pull(
+        delay_sideset: u16, // 5 bit
+        if_empty: bool,     // 1 bit
+        block: bool,        // 1 bit
+    ) -> u16 {
+        let if_empty = u16::from(if_empty);
+        let block = u16::from(block);
+        let delay_sideset = delay_sideset & 0x1f;
+        PioInstruction::PUSHPULL
+            | delay_sideset << 8u16
+            | 1u16 << 7u16
+            | if_empty << 6u16
+            | block << 5u16
+    }
+
+    /// copies data from source to destination
+    ///
+    /// destination options (binary):
+    /// 000: PINS (Uses same pin mapping as OUT)
+    /// 001: X (Scratch register X)
+    /// 010: Y (Scratch register Y)
+    /// 011: Reserved
+    /// 100: EXEC (Execute data as instruction)
+    /// 101: PC
+    /// 110: ISR (Input shift counter is reset to 0 by this operation, i.e. empty)
+    /// 111: OSR (Output shift counter is reset to 0 by this operation, i.e. full)
+    ///
+    /// operation options (binary):
+    /// 00: None
+    /// 01: Invert (bitwise complement)
+    /// 10: Bit-reverse
+    /// 11: Reserved
+    ///
+    /// source options (binary):
+    /// 000: PINS (Uses same pin mapping as IN)
+    /// 001: X
+    /// 010: Y
+    /// 011: NULL
+    /// 100: Reserved
+    /// 101: STATUS
+    /// 110: ISR
+    /// 111: OSR
+    pub fn mov(
+        delay_sideset: u16, // 5 bit
+        destination: u16,   // 3 bit
+        source: u16,        // 3 bit
+        operation: u16,     // 2 bit
+    ) -> u16 {
+        let delay_sideset = delay_sideset & 0x1f;
+        let source = source & 0x7;
+        let destination = destination & 0x7;
+        let operation = operation & 0x3;
+        PioInstruction::MOV
+            | delay_sideset << 8u16
+            | destination << 5u16
+            | operation << 3u16
+            | source
+    }
+
+    /// set or clear the IRQ flag selected by the index
+    /// clear: if 1 clear the flag instead of raising it, also wait has no effect if clear = 1
+    /// wait: if 1 wait until the raised flag is lowered again
+    /// state machine: which state machine it is (0-3)
+    /// index: IRQ index
+    pub fn irq(
+        delay_sideset: u16, // 5 bit
+        clear: bool,        // 1 bit
+        wait: bool,         // 1 bit
+        state_machine: u16, // 2 bit
+        index: u16,         // 3 bit
+    ) -> u16 {
+        let clear = u16::from(clear);
+        let wait = u16::from(wait);
+        let delay_sideset = delay_sideset & 0x1f;
+        let index = index & 0x1f;
+        let state_machine = state_machine & 0x3;
+
+        PioInstruction::IRQ
+            | delay_sideset << 8u16
+            | 0u16 << 7u16
+            | clear << 6u16
+            | wait << 5u16
+            | state_machine << 3u16
+            | index
+    }
+
+    /// write immediate value of data to destination
+    ///
+    /// destination options (binary):
+    /// 000: PINS
+    /// 001: X (scratch register X) 5 LSBs are set to Data, all others cleared to 0.
+    /// 010: Y (scratch register Y) 5 LSBs are set to Data, all others cleared to 0.
+    /// 011: Reserved
+    /// 100: PINDIRS
+    /// 101: Reserved
+    /// 110: Reserved
+    /// 111: Reserved
+    pub fn set(
+        delay_sideset: u16, // 5 bit
+        destination: u16,   // 3 bit
+        data: u16,          // 5 bit
+    ) -> u16 {
+        let delay_sideset = delay_sideset & 0x1f;
+        let destination = destination & 0x7;
+        let data = data & 0x1f;
+
+        PioInstruction::SET | delay_sideset << 8u16 | destination << 5u16 | data
+    }
+
+    /// assembles to move y, y [sideset]
+    /// does nothing lol
+    pub fn nop(delay_sideset: u16) -> u16 {
+        PioInstruction::mov(delay_sideset, 0x010, 0x101, 0)
+    }
+}
+
 /// Represents a relocated PIO program.
 ///
 /// An [Iterator] that yields the original program except `JMP` instructions have
